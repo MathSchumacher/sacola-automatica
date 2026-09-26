@@ -1,6 +1,10 @@
 // Simulador da SACOLA (content-bag.js) — vive no repositório, não em temp.
 //
-// Uso:  node tests/bag-test.cjs <cenario>        (ANTIGO=1 recria o clique só no input)
+// Uso:  node tests/bag-test.cjs <cenario>        (--ref=<commit> roda o content-bag.js daquele commit)
+//
+// DOM de mentira: rápido e sem dependências, bom para a LÓGICA (casamento, limite, lote, URL).
+// Não reproduz clique em <label>, nós que saem da página, shadow DOM nem o React — o checkbox
+// que não marcava passou por aqui da 1.9.0 à 1.9.1. Para a marcação: tests/sacola-navegador.cjs.
 //
 // Cenários:
 //   real               2 do lote no topo → marca os 2, confirma, sacola +2; o 3º (sem link) fica pendente
@@ -15,7 +19,9 @@
 const fs = require("fs");
 const path = require("path");
 const EXT = path.resolve(__dirname, "..", "extension");
-const cenario = process.argv[2] || "real";
+const args = process.argv.slice(2);
+const cenario = args.find((a) => !a.startsWith("--")) || "real";
+const REF = (args.find((a) => a.startsWith("--ref=")) || "").slice(6) || process.env.REF || "";
 
 class El {
   constructor(tag, text = "", attrs = {}) {
@@ -140,14 +146,11 @@ global.document = {
 let resposta = null;
 global.chrome = { runtime: { onMessage: { addListener(fn) { (global.__lst ||= []).push(fn); } }, sendMessage: async () => ({}), lastError: null }, storage: { local: { set: async () => {}, get: async () => ({}) } } };
 
-let src = fs.readFileSync(path.join(EXT, "content-bag.js"), "utf8").replace("const log = [];", "const log = (global.__logParcial = []);");
-if (process.env.ANTIGO) {
-  // 1.9.0: clique só no input escondido, depois no container, sem cascata
-  const i = src.indexOf("        for (const alvo of alvosDeMarcacao(card)) {");
-  const j = src.indexOf("        const ok = pegou() || (await esperar(pegou, 800, 200));");
-  if (i < 0 || j < 0) throw new Error("ancoras do modo ANTIGO nao encontradas");
-  src = src.slice(0, i) + "        if (card.input) { realClick(card.input); await sleep(250); }\n        if (!pegou()) { realClick(card.container); await sleep(300); }\n" + src.slice(j);
-}
+const src = (
+  REF
+    ? require("child_process").execFileSync("git", ["show", `${REF}:extension/content-bag.js`], { cwd: path.resolve(__dirname, ".."), encoding: "utf8" })
+    : fs.readFileSync(path.join(EXT, "content-bag.js"), "utf8")
+).replace("const log = [];", "const log = (global.__logParcial = []);");
 eval(src);
 
 // ---------- o lote ----------
@@ -172,7 +175,7 @@ const relogio = setInterval(() => {
   const log = resposta.log || [];
   const rodouBusca = log.some((l) => /^busca /.test(l));
   const incerta = log.some((l) => /marcação incerta/.test(l));
-  console.log(`cenário=${cenario}${process.env.ANTIGO ? " [ANTIGO]" : ""} modo=${modo} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  console.log(`cenário=${cenario}${REF ? ` [${REF}]` : ""} modo=${modo} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   console.log("resultado:", JSON.stringify({ ok: resposta.ok, motivo: resposta.motivo, adicionados: resposta.adicionados, importados: resposta.importados, pendentes: resposta.pendentes, atual: resposta.atual, cresceu: resposta.cresceu }));
   console.log("confirmados na tela:", JSON.stringify(confirmados));
   let ok;

@@ -210,9 +210,12 @@
     return n;
   }
 
-  function realClick(el) {
+  /** (x, y) opcionais: o ponto da tela onde a pessoa clicaria; sem eles, o centro do elemento. */
+  function realClick(el, x, y) {
     const r = el.getBoundingClientRect();
-    const o = { bubbles: true, cancelable: true, composed: true, clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2), view: window };
+    const cx = x != null ? x : Math.round(r.left + r.width / 2);
+    const cy = y != null ? y : Math.round(r.top + r.height / 2);
+    const o = { bubbles: true, cancelable: true, composed: true, clientX: cx, clientY: cy, view: window };
     try {
       el.dispatchEvent(new PointerEvent("pointerover", o));
       el.dispatchEvent(new MouseEvent("mouseover", o));
@@ -226,10 +229,10 @@
     el.click();
   }
 
-  function hover(el) {
+  function hover(el, tipos = ["pointerover", "mouseover", "mouseenter", "mousemove"]) {
     const r = el.getBoundingClientRect();
     const o = { bubbles: true, cancelable: true, clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2), view: window };
-    for (const t of ["pointerover", "mouseover", "mouseenter", "mousemove"]) {
+    for (const t of tipos) {
       try {
         el.dispatchEvent(t.startsWith("pointer") ? new PointerEvent(t, o) : new MouseEvent(t, o));
       } catch {
@@ -237,6 +240,8 @@
       }
     }
   }
+  /** Tira o mouse de cima: sem isto o card fica "com hover" e muda de aparência sozinho depois. */
+  const sairDoHover = (el) => hover(el, ["pointerout", "mouseout", "pointerleave", "mouseleave"]);
 
   async function esperar(cond, ms, passo = 300) {
     const t0 = Date.now();
@@ -402,97 +407,518 @@
       if (cards.some((j) => j.container.contains && j.container.contains(c.el))) continue;
       cards.push({ input: null, container: c.el, titulo: c.titulo, preco: precoDoCard(c.texto), ...faixaDoCard(c.texto), semCheckbox: true });
     }
-    if (cards.length) reg(`sem checkbox reconhecível: usando ${cards.length} card(s) identificados pelo preço`);
+    // Uma vez por rodada: esta função roda em laço (grid estável, conferência da marcação) e
+    // repetir a linha empurrava para fora do log de 60 linhas justo o que explica a falha.
+    if (cards.length && !avisouSemCheckbox) {
+      avisouSemCheckbox = true;
+      reg(`sem checkbox reconhecível: usando ${cards.length} card(s) identificados pelo preço`);
+    }
     return cards;
   }
+  let avisouSemCheckbox = false;
 
-  /** Está marcado? Com checkbox real é direto; sem ele, o card selecionado muda de aparência
-   *  (classe, borda colorida ou ícone de "check" aparecendo dentro dele). */
-  function marcado(c) {
-    if (c.input) return c.input.checked === true || c.input.getAttribute("aria-checked") === "true";
-    const el = c.container;
-    if (!el) return false;
-    if (el.getAttribute?.("aria-checked") === "true" || el.getAttribute?.("aria-selected") === "true") return true;
-    const cls = String(el.className || "");
-    if (/(selected|checked|active|ativo|selecionad)/i.test(cls)) return true;
-    for (const filho of el.querySelectorAll ? el.querySelectorAll("div,span,i,svg") : []) {
-      const fc = String(filho.className || "");
-      if (typeof fc === "string" && /(checked|selected|tick|check)/i.test(fc) && visivel(filho)) return true;
-    }
-    return false;
-  }
-  /** Alvos de clique para marcar um card, do mais provável ao mais amplo.
-   *  Checkbox estilizado (Ant Design / React): o <input> é invisível; quem recebe o clique de
-   *  verdade é o <label> que o envolve ou o <span> do quadrado desenhado ao lado dele. */
-  function alvosDeMarcacao(c) {
-    const lista = [];
-    const inp = c.input;
-    if (inp) {
-      const label = inp.closest ? inp.closest("label") : null;
-      if (label && visivel(label)) lista.push(label);
-      const irmao = inp.nextElementSibling;
-      if (irmao && visivel(irmao)) lista.push(irmao);
-      const pai = inp.parentElement;
-      if (pai && pai !== label && visivel(pai)) lista.push(pai);
-      lista.push(inp);
-    }
-    if (c.container) lista.push(c.container);
-    const vistos = new Set();
-    return lista.filter((el) => el && !vistos.has(el) && vistos.add(el));
-  }
+  // ---- marcar um card de "Meus Favoritos" ----
+  //
+  // O que deu errado aqui — e por que cada peça abaixo existe. Falhas da 1.9.1 medidas num
+  // Chromium de verdade, com a extensão carregada (tests/sacola-navegador.cjs):
+  //  - marcador DESENHADO, sem <input>: procurava "check" nas classes e achava a palavra
+  //    "checkbox" num card DESMARCADO → "já estava na sacola", nenhum clique, e o item ainda
+  //    saía do lote como se tivesse entrado;
+  //  - grade que se redesenha ao selecionar: do 2º produto em diante o clique ia para um nó que
+  //    já tinha saído da página — o input solto alternava e parecia "marcado";
+  //  - seleção que passa pelo servidor: a cascata esperava 0,7 s e clicava o alvo seguinte, que
+  //    DESMARCAVA o que o primeiro tinha marcado (cada produto alternado duas vezes);
+  //  - marcador dentro de um web component (shadow DOM): só o card inteiro era clicado e nada
+  //    acontecia ("marcação incerta", sacola +0 — o sintoma da 1.9.0, que persistiu na 1.9.1).
+  // Agora: o clique vai no label do checkbox ou no PONTO onde a dona clicaria (o elemento que
+  // está de fato sobre o quadradinho), o card é relido da página a cada conferência, e outro
+  // alvo só é tentado quando o anterior comprovadamente não mudou NADA — clicar de novo depois
+  // de pegar desmarca.
 
-  /** Retrato do card para comparar antes/depois do clique: classes, atributos, cores e
-   *  quantidade de filhos. Selecionar sempre muda ALGO — cor da borda, ícone de check que
-   *  aparece, classe que entra. É o sinal que faltava para o 2º, 3º… produto de uma leva:
-   *  o botão "Confirmar" só sai de apagado no primeiro, e sem outro sinal os demais eram
-   *  dados como "não consegui marcar" e caíam no Importar via URL à toa. */
-  function assinaturaCard(c) {
-    const el = c && c.container;
-    if (!el) return "";
-    const partes = [String(el.className || ""), el.getAttribute?.("aria-checked") || "", el.getAttribute?.("aria-selected") || ""];
-    try {
-      const cs = getComputedStyle(el);
-      partes.push(cs.borderColor, cs.backgroundColor, String(cs.boxShadow || "").slice(0, 40));
-    } catch {
-      /* fora do navegador */
-    }
-    const filhos = el.querySelectorAll ? el.querySelectorAll("div,span,i,svg,input,label") : [];
-    let marcas = 0;
-    for (let i = 0; i < filhos.length && i < 60; i++) {
-      const f = filhos[i];
-      const fc = String(f.className || "");
-      if (/check|select|tick|ativo|marcad/i.test(fc)) marcas++;
-      if (f.tagName === "SVG") marcas++;
-      if (f.tagName === "INPUT" && f.checked) marcas++;
-      // o marcador desenhado pode ser só uma cor de fundo/borda (ou um ::after) num nó pequeno
-      if (i < 40) {
-        partes.push(fc.slice(0, 30));
-        try {
-          const cs = getComputedStyle(f);
-          partes.push(cs.backgroundColor, cs.borderColor, cs.opacity);
-          const ps = getComputedStyle(f, "::after");
-          partes.push(ps.content, ps.backgroundColor, ps.opacity, ps.transform);
-        } catch {
-          /* ignore */
-        }
+  const SEL_CHECKBOX = 'input[type="checkbox"], [role="checkbox"], [aria-checked]';
+  const classeDe = (el) => (el && el.getAttribute ? el.getAttribute("class") || "" : "");
+
+  /** querySelectorAll que também entra em shadow roots abertos (web components). */
+  function acharProfundo(raiz, seletor, limite = 200) {
+    const out = [];
+    const pilha = [raiz];
+    let vistos = 0;
+    while (pilha.length && out.length < limite && vistos < 4000) {
+      const r = pilha.pop();
+      if (!r || !r.querySelectorAll) continue;
+      for (const el of r.querySelectorAll(seletor)) {
+        if (out.length >= limite) break;
+        out.push(el);
+      }
+      for (const el of r.querySelectorAll("*")) {
+        if (++vistos > 4000) break;
+        if (el.shadowRoot) pilha.push(el.shadowRoot);
       }
     }
-    partes.push("f" + filhos.length, "m" + marcas);
-    const marcador = el.querySelector?.('input, [class*="check"], [class*="select"]');
-    if (marcador) {
+    return out;
+  }
+
+  /** Pai "de verdade", atravessando a fronteira do shadow DOM (de dentro para o host). */
+  function paiComposto(el) {
+    if (!el) return null;
+    if (el.parentElement) return el.parentElement;
+    const raiz = el.getRootNode ? el.getRootNode() : null;
+    return raiz && raiz.host ? raiz.host : null;
+  }
+  function contemComposto(anc, el) {
+    for (let p = el, i = 0; p && i < 80; p = paiComposto(p), i++) if (p === anc) return true;
+    return false;
+  }
+
+  /** O elemento que está de fato no ponto (x, y) — é ele que recebe o clique de uma pessoa.
+   *  Desce por shadow roots abertos. */
+  function elementoNoPonto(x, y) {
+    try {
+      let el = document.elementFromPoint(x, y);
+      for (let i = 0; el && el.shadowRoot && i < 6; i++) {
+        const dentro = el.shadowRoot.elementFromPoint(x, y);
+        if (!dentro || dentro === el) break;
+        el = dentro;
+      }
+      return el;
+    } catch {
+      return null;
+    }
+  }
+
+  /** O estado vem num PEDAÇO inteiro da classe, separado por - ou _: "ant-checkbox-checked",
+   *  "shp-checkbox--checked", "fav-card--selected", "is-checked", "isChecked", "chk--on".
+   *  Nunca "checkbox" nem "unchecked" — foi essa confusão que deu "já estava na sacola". */
+  function classeIndicaMarcado(el) {
+    return classeDe(el)
+      .split(/\s+/)
+      .some((t) => t && (/(^|[-_])(is-?)?(checked|selected)($|[-_])/i.test(t) || /[-_]on$/i.test(t)));
+  }
+  const classeIndicaDesabilitado = (el) => classeDe(el).split(/\s+/).some((t) => /(^|[-_])(is-?)?disabled($|[-_])/i.test(t));
+
+  /** O checkbox do card — no DOM normal ou dentro de um web component. Sempre da página ATUAL:
+   *  referência a um nó que saiu da página não serve para nada. */
+  function inputDoCard(card) {
+    const i = card.input;
+    if (i && i.isConnected !== false && contemComposto(card.container, i)) return i;
+    return acharProfundo(card.container, SEL_CHECKBOX, 1)[0] || null;
+  }
+
+  function tamanhoDeMarcador(el) {
+    const r = el.getBoundingClientRect();
+    return r.width >= 8 && r.height >= 8 && r.width <= 44 && r.height <= 44;
+  }
+
+  /** O label que controla ESTE input. Um label que engloba vários cards controla só o primeiro
+   *  input dele — clicá-lo marcaria outro produto. */
+  function labelDo(inp) {
+    const deste = (l) => (l && (l.control === undefined || l.control === inp) ? l : null);
+    const l = inp.closest ? inp.closest("label") : null;
+    if (l) return deste(l);
+    try {
+      if (inp.id) return deste((inp.getRootNode ? inp.getRootNode() : document).querySelector(`label[for="${CSS.escape(inp.id)}"]`));
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  /** Marcador desenhado (sem <input>): pequeno, quase quadrado, perto de um canto de cima do
+   *  card. Nome de classe ajuda mas não é exigido — a Shopee pode usar classes embaralhadas. */
+  function marcadorDesenhado(container) {
+    if (!container || !container.getBoundingClientRect) return null;
+    const rc = container.getBoundingClientRect();
+    let melhor = null;
+    let melhorNota = 0;
+    for (const el of acharProfundo(container, "*", 400)) {
+      if (!visivel(el) || !tamanhoDeMarcador(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 10 || r.height < 10) continue;
+      if (Math.abs(r.width - r.height) > Math.max(4, 0.25 * Math.max(r.width, r.height))) continue;
+      if (/^(img|picture|video|canvas|path|g|use|circle|rect|line|polyline)$/i.test(el.tagName)) continue;
+      if ((el.textContent || "").trim().length > 2) continue;
+      const rotulo = `${classeDe(el)} ${el.getAttribute("aria-label") || ""} ${el.getAttribute("title") || ""}`;
+      if (/heart|like|favorit|curtir|cora[cç]|play|video/i.test(rotulo)) continue; // coração, vídeo
+      const temPapel = el.getAttribute("role") === "checkbox" || el.hasAttribute("aria-checked");
+      const temNome = /check|select|tick|mark/i.test(rotulo);
+      let temBorda = false;
+      let apontavel = false;
       try {
-        const cs2 = getComputedStyle(marcador);
-        partes.push(cs2.backgroundColor, cs2.borderColor);
+        const cs = getComputedStyle(el);
+        temBorda = parseFloat(cs.borderTopWidth) > 0 && parseFloat(cs.borderLeftWidth) > 0 && parseFloat(cs.borderBottomWidth) > 0;
+        apontavel = cs.cursor === "pointer";
       } catch {
         /* ignore */
       }
+      // Precisa de ALGO de checkbox. Só "ícone pequeno no canto" pode ser o botão de
+      // pré-visualização ou um selo — clicar nisso abriria outra coisa por cima da janela.
+      if (!temPapel && !temNome && !temBorda) continue;
+      let nota = (temPapel ? 6 : 0) + (temNome ? 3 : 0) + (temBorda ? 2 : 0) + (apontavel ? 1 : 0);
+      const noTopo = r.top - rc.top < rc.height * 0.4;
+      const noCanto = r.left - rc.left < rc.width * 0.4 || rc.right - r.right < rc.width * 0.4;
+      if (noTopo && noCanto) nota += 2;
+      if (nota > melhorNota) {
+        melhorNota = nota;
+        melhor = el;
+      }
     }
-    return partes.join("|");
+    return melhorNota >= 3 ? melhor : null;
+  }
+
+  /** O quadradinho que a dona vê e clica. Com <input>: o próprio input quando ele cobre o
+   *  quadrado (Ant Design), senão o irmão/pai desenhado ou o label. Sem <input>: o desenhado. */
+  function quadradoDoCard(card) {
+    const inp = inputDoCard(card);
+    if (inp) {
+      for (const el of [inp, inp.nextElementSibling, inp.previousElementSibling, inp.parentElement]) {
+        if (el && visivel(el) && tamanhoDeMarcador(el)) return el;
+      }
+      const label = labelDo(inp);
+      if (label && visivel(label)) return label;
+    }
+    return marcadorDesenhado(card.container);
+  }
+
+  /** true = marcado, false = desmarcado, null = não dá para ler (marcador desenhado sem
+   *  classe de estado). Nunca ADIVINHA "marcado". */
+  function estadoDoCard(card) {
+    const inp = inputDoCard(card);
+    if (inp) {
+      if (inp.tagName === "INPUT" ? inp.checked === true : inp.getAttribute("aria-checked") === "true") return true;
+    }
+    const q = quadradoDoCard(card);
+    for (let el = q || card.container, i = 0; el && i < 8; el = paiComposto(el), i++) {
+      if (el.getAttribute?.("aria-checked") === "true" || el.getAttribute?.("aria-selected") === "true" || classeIndicaMarcado(el)) return true;
+      if (el === card.container) break;
+    }
+    return inp ? false : null;
+  }
+
+  /** Marcador desenhado PREENCHIDO de cor forte (o laranja da Shopee) — não branco, cinza,
+   *  transparente nem um tom claro. Só vale quando o estado não é legível (estadoDoCard null). */
+  function quadradinhoCheio(card) {
+    const q = quadradoDoCard(card);
+    if (!q) return false;
+    const cheio = (el) => {
+      try {
+        const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,/\s]+([\d.]+))?/.exec(getComputedStyle(el).backgroundColor || "");
+        if (!m) return false;
+        const [r, g, b, a] = [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]];
+        const luz = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+        return a >= 0.5 && (Math.max(r, g, b) - Math.min(r, g, b)) / 255 >= 0.45 && luz <= 0.8;
+      } catch {
+        return false;
+      }
+    };
+    return cheio(q) || [...(q.children || [])].some(cheio);
   }
 
   /** Desabilitado ≠ "já está na sacola": costuma ser produto indisponível/inelegível.
    *  Tratar como "já está" faria o item sumir do lote sem nunca ter entrado. */
-  const desabilitado = (c) => !!(c.input && (c.input.disabled === true || c.input.getAttribute("aria-disabled") === "true"));
+  function cardDesabilitado(card) {
+    const inp = inputDoCard(card);
+    if (inp && (inp.disabled === true || inp.getAttribute("aria-disabled") === "true")) return true;
+    const q = quadradoDoCard(card);
+    for (let el = q, i = 0; el && el !== card.container && i < 6; el = paiComposto(el), i++) {
+      if (el.getAttribute?.("aria-disabled") === "true" || classeIndicaDesabilitado(el)) return true;
+    }
+    return false;
+  }
+
+  /** O nó ainda mostra ESTE produto? Uma grade com chave por posição reaproveita o mesmo nó
+   *  para outro produto quando um favorito novo entra no topo (a dona favoritando na mão). */
+  function aindaEhOMesmo(card) {
+    const titulo = norm(card.titulo);
+    if (!titulo) return true;
+    const c = card.container;
+    if (norm(c.textContent || "").includes(titulo)) return true;
+    for (const el of c.querySelectorAll ? c.querySelectorAll("[title]") : []) if (norm(el.getAttribute("title")).includes(titulo)) return true;
+    return false;
+  }
+
+  /** O mesmo card, lido da página AGORA. A grade pode se redesenhar a cada seleção (nós novos);
+   *  a referência antiga fica solta e clicar nela não faz nada na tela. Reacha pelo título —
+   *  e só se ele for único, para nunca trocar de produto. */
+  function cardVivo(card) {
+    if (card.container && card.container.isConnected !== false && visivel(card.container) && aindaEhOMesmo(card)) return card;
+    const alvo = norm(card.titulo);
+    const iguais = cardsFavoritos().filter((c) => norm(c.titulo) === alvo);
+    return iguais.length === 1 ? iguais[0] : null;
+  }
+
+  function descrever(el) {
+    if (!el || !el.tagName) return "?";
+    const cls = classeDe(el).trim().split(/\s+/)[0] || "";
+    let extra = "";
+    if (el.tagName === "INPUT") extra = `[${el.type || "?"}${el.checked ? ",marcado" : ""}${el.disabled ? ",desabilitado" : ""}]`;
+    else if (el.getAttribute?.("role")) extra = `[role=${el.getAttribute("role")}]`;
+    if (el.getAttribute?.("aria-checked") != null) extra += `[aria-checked=${el.getAttribute("aria-checked")}]`;
+    let tam = "";
+    try {
+      const r = el.getBoundingClientRect();
+      tam = ` ${Math.round(r.width)}×${Math.round(r.height)}`;
+    } catch {
+      /* ignore */
+    }
+    return `${el.tagName.toLowerCase()}${cls ? "." + cls.slice(0, 32) : ""}${extra}${tam}`;
+  }
+
+  /** Estrutura do card em uma linha (vai para o log). Quando a marcação falha na tela real,
+   *  é isto que diz como a Shopee desenhou o checkbox — sem isto, "não marcou" não diz nada. */
+  function resumoDoCard(card) {
+    // Primeiro o caminho até o checkbox (o que importa), depois o resto do card.
+    const alvo = inputDoCard(card) || quadradoDoCard(card);
+    const caminho = [];
+    for (let el = alvo, i = 0; el && i < 10; el = paiComposto(el), i++) {
+      caminho.unshift(descrever(el));
+      if (el === card.container) break;
+    }
+    const partes = [];
+    const visitar = (el, prof) => {
+      if (!el || partes.length >= 30 || prof > 6) return;
+      partes.push(`${prof}:${descrever(el)}`);
+      if (/^(svg|img|picture|video)$/i.test(el.tagName)) return;
+      const filhos = [...(el.shadowRoot ? el.shadowRoot.children : []), ...(el.children || [])];
+      for (const f of filhos) visitar(f, prof + 1);
+    };
+    visitar(card.container, 0);
+    return `checkbox: ${caminho.length ? caminho.join(" > ") : "(nenhum encontrado)"} || card: ${partes.join(" ")}`.slice(0, 1200);
+  }
+
+  /** Aparência do quadradinho e do card: classes, atributos e cores — inclusive ::before/::after,
+   *  onde o Ant Design desenha o "✓". Só a região do marcador, não o card todo (imagem
+   *  carregando ou selo animado não podem parecer seleção). */
+  function assinaturaDoMarcador(card) {
+    const q = quadradoDoCard(card);
+    const nos = [card.container];
+    for (let el = q, i = 0; el && el !== card.container && i < 6; el = paiComposto(el), i++) nos.push(el);
+    if (q) nos.push(...acharProfundo(q, "*", 12));
+    const partes = [];
+    for (const el of nos) {
+      partes.push(el.tagName, classeDe(el), el.getAttribute?.("aria-checked") || "", el.getAttribute?.("aria-selected") || "");
+      if (el.tagName === "INPUT") partes.push(el.checked ? "on" : "off");
+      try {
+        const cs = getComputedStyle(el);
+        partes.push(cs.backgroundColor, cs.borderColor, cs.color, cs.opacity);
+        for (const pseudo of ["::before", "::after"]) {
+          const ps = getComputedStyle(el, pseudo);
+          partes.push(ps.content, ps.opacity, ps.transform, ps.backgroundColor, ps.borderColor);
+        }
+      } catch {
+        /* fora do navegador */
+      }
+    }
+    if (q) partes.push("f" + (q.childElementCount || 0));
+    return partes.join("|");
+  }
+
+  /** "2 produto(s) selecionado(s)", "Selecionados: 2", "2/50 selecionados" → 2. Sem contador → null.
+   *  Só no rodapé, perto do "Confirmar": sem marcador <input>, a raiz da janela pode subir até a
+   *  página inteira — e uma mensagem do chat com "2 selecionados" viraria um falso sinal. */
+  function contadorDeSelecionados(confirmar, raiz) {
+    let area = confirmar;
+    for (let i = 0; area && i < 3 && area.parentElement && !(raiz && area === raiz); i++) area = area.parentElement;
+    const els = area && area.querySelectorAll ? area.querySelectorAll("div,span,p,strong,b,label") : [];
+    for (let i = 0; i < els.length && i < 400; i++) {
+      const el = els[i];
+      if (el.childElementCount > 3) continue;
+      const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!t || t.length > 60 || !/selecion|selected/i.test(t)) continue;
+      const m =
+        /(\d+)\s*(?:\/\s*\d+\s*)?(?:produtos?|itens?|items?)?\s*(?:\(s\))?\s*(?:selecionad|selected)/i.exec(t) ||
+        /(?:selecion(?:ad[oa]s?|ou)|selected)\s*:?\s*\(?\s*(\d+)/i.exec(t);
+      if (m && visivel(el)) return Number(m[1]);
+    }
+    return null;
+  }
+
+  /** O que a JANELA diz sobre a seleção, independente de qual nó é o card. Roda a cada 100 ms
+   *  enquanto espera o clique pegar: a raiz da janela (que varre o documento) é guardada
+   *  enquanto continuar na página. */
+  let raizDaJanela = null;
+  function sinaisGlobais() {
+    if (!raizDaJanela || raizDaJanela.isConnected === false || !visivel(raizDaJanela)) raizDaJanela = containerModalFavoritos();
+    const raiz = raizDaJanela || document;
+    let marcados = 0;
+    for (const el of acharProfundo(raiz, SEL_CHECKBOX, 300)) {
+      if (el.checked === true || el.getAttribute?.("aria-checked") === "true") marcados++;
+    }
+    const btn = botaoConfirmar(raizDaJanela);
+    return { marcados, contador: contadorDeSelecionados(btn, raizDaJanela), confirmar: confirmarHabilitado(raizDaJanela, btn) };
+  }
+
+  /** Alvos do clique, do mais certeiro ao mais amplo.
+   *  Com <input>, o LABEL vem primeiro: o navegador repassa o clique dele ao input como clique
+   *  CONFIÁVEL (isTrusted) — funciona com input escondido e até em tela que ignora clique
+   *  sintético (medido: o clique direto no input falha ali, o do label passa).
+   *  Depois o PONTO: o elemento que está de fato sobre o quadradinho (o <input> transparente do
+   *  Ant Design, o desenho, ou o card por baixo dele) — exatamente o que a dona clicaria.
+   *  O card inteiro só entra quando não há quadradinho nenhum para mirar. */
+  function alvosDeMarcacao(card) {
+    const lista = [];
+    const inp = inputDoCard(card);
+    const label = inp ? labelDo(inp) : null;
+    if (label && visivel(label)) lista.push({ chave: "label", el: label, nome: `label (${descrever(label)})` });
+    const q = quadradoDoCard(card);
+    if (q) {
+      const r = q.getBoundingClientRect();
+      const x = Math.round(r.left + r.width / 2);
+      const y = Math.round(r.top + r.height / 2);
+      const noPonto = elementoNoPonto(x, y);
+      if (noPonto && contemComposto(card.container, noPonto)) lista.push({ chave: "ponto", el: noPonto, x, y, nome: `ponto do quadradinho (${descrever(noPonto)})` });
+      lista.push({ chave: "quadrado", el: q, x, y, nome: `quadradinho (${descrever(q)})` });
+    }
+    if (inp) lista.push({ chave: "input", el: inp, nome: `input (${descrever(inp)})` });
+    if (!q) lista.push({ chave: "card", el: card.container, nome: `card (${descrever(card.container)})` });
+    const vistos = new Set();
+    // Nada dentro de link: o clique abriria a página do produto NA ABA DA LIVE.
+    return lista.filter((a) => a.el && a.el.isConnected !== false && !vistos.has(a.el) && vistos.add(a.el) && !dentroDeLink(a.el));
+  }
+
+  function dentroDeLink(el) {
+    for (let p = el, i = 0; p && i < 60; p = paiComposto(p), i++) {
+      if (p.tagName === "A" && p.getAttribute?.("href") && !/^\s*(#|javascript:)/i.test(p.getAttribute("href"))) return true;
+    }
+    return false;
+  }
+
+  /** A janela passou a mostrar mais seleção do que em `antes`? */
+  const janelaRegistrou = (antes, g) =>
+    g.marcados > antes.marcados || (g.contador != null && antes.contador != null && g.contador > antes.contador) || (!antes.confirmar && g.confirmar);
+
+  /** O card mostra que está processando (spinner, aria-busy)? Seleção que passa pelo servidor. */
+  function cardOcupado(card) {
+    try {
+      return [...card.container.querySelectorAll('[aria-busy="true"], [class*="loading" i], [class*="spin" i]')].some(visivel);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Espera a aparência parar de mudar (hover, transição) antes de fotografar o "antes". */
+  async function linhaDeBase(cardOrig) {
+    let card = cardVivo(cardOrig);
+    let a = card ? assinaturaDoMarcador(card) : "";
+    for (let i = 0; i < 8; i++) {
+      await sleep(100);
+      card = cardVivo(cardOrig);
+      const b = card ? assinaturaDoMarcador(card) : "";
+      if (b === a) break;
+      a = b;
+    }
+    return { a, g: sinaisGlobais(), ocupado: !!card && cardOcupado(card) };
+  }
+
+  /** Depois do clique: o produto ficou marcado? Lê SEMPRE a página atual (o card é relido).
+   *  Sinais fortes: o checkbox do card, o contador da janela, o Confirmar acendendo, mais um
+   *  checkbox marcado na janela. Sinal fraco: o quadradinho mudou de aparência — vale sozinho
+   *  quando não há checkbox para ler. Espera o suficiente para seleção que passa pelo servidor. */
+  async function esperarEfeito(cardOrig, base, ms) {
+    const t0 = Date.now();
+    let mudouDesde = 0;
+    let globalMudou = false;
+    let card = null;
+    let estado = null;
+    let prazo = ms;
+    while (Date.now() - t0 < prazo) {
+      await sleep(100);
+      card = cardVivo(cardOrig);
+      estado = card ? estadoDoCard(card) : null;
+      // Carregando DEPOIS do clique: a resposta ainda vem. Clicar outro alvo agora desmarcaria
+      // quando ela chegar. (Um "carregando" que já estava lá — imagem, selo — não conta.)
+      if (card && !base.ocupado && cardOcupado(card)) prazo = Math.min(6000, Math.max(prazo, Date.now() - t0 + 1000));
+      if (estado === true) return { marcado: true, txt: `marcou em ${Date.now() - t0}ms` };
+      const global = janelaRegistrou(base.g, sinaisGlobais());
+      // Se o checkbox DESTE card diz "desmarcado", o sinal global não é dele (ou ainda não
+      // chegou): espera mais, em vez de dar como marcado.
+      if (global && estado !== false) return { marcado: true, txt: `a janela registrou a seleção em ${Date.now() - t0}ms` };
+      if (global) globalMudou = true;
+      const mudou = card ? assinaturaDoMarcador(card) !== base.a : false;
+      if (!mudou) mudouDesde = 0;
+      else if (!mudouDesde) mudouDesde = Date.now();
+      if (mudou && estado === null && quadradinhoCheio(card)) return { marcado: true, fraco: true, txt: `o quadradinho ficou preenchido em ${Date.now() - t0}ms` };
+      if (mudou && estado === null && Date.now() - mudouDesde >= 400) return { marcado: true, fraco: true, txt: `o quadradinho mudou de aparência em ${mudouDesde - t0}ms` };
+    }
+    // Mudança que PERMANECEU (não um efeito passageiro) e estado ilegível: não arrisco outro
+    // clique — se tiver pegado, clicar de novo desmarcaria. A contagem da sacola decide.
+    const mudouNoFim = !!card && assinaturaDoMarcador(card) !== base.a;
+    if (globalMudou || mudouNoFim) return { marcado: false, mudou: true, txt: "algo mudou, mas o checkbox não confirma" };
+    return { marcado: false, mudou: false, txt: "nada mudou" };
+  }
+
+  let alvoQueFuncionou = null; // tipo de alvo que marcou o card anterior: vai primeiro no próximo
+
+  /** Marca UM card. status:
+   *   marcado        há sinal de que o produto ficou selecionado
+   *   jaMarcado      já estava marcado antes de qualquer clique (checkbox, atributo ou classe)
+   *   pareceMarcado  quadradinho já preenchido, sem estado legível: não clico (desmarcaria) e
+   *                  também não afirmo que está na sacola — o item segue pelo link
+   *   indisponivel   desabilitado (produto indisponível — NÃO é "já está na sacola")
+   *   incerto        algo mudou mas não dá para confirmar; não clico de novo (desmarcaria)
+   *   semEfeito      nenhum alvo mudou nada: o produto NÃO está selecionado
+   *   sumiu          o card saiu da tela */
+  async function marcarCard(cardOrig) {
+    const t0 = Date.now();
+    raizDaJanela = null; // a memória da raiz vale só durante a marcação de um card
+    let card = cardVivo(cardOrig);
+    if (!card) return { status: "sumiu", tentativas: [] };
+    const estado0 = estadoDoCard(card);
+    if (estado0 === true) return { status: "jaMarcado", tentativas: [] };
+    if (estado0 === null && quadradinhoCheio(card)) return { status: "pareceMarcado", tentativas: [] };
+    if (cardDesabilitado(card)) return { status: "indisponivel", tentativas: [] };
+    const tentativas = [];
+    const usados = new Set();
+    let redesenhos = 0;
+    const antesDeTudo = sinaisGlobais(); // a janela antes do 1º clique
+    try {
+      for (let rodada = 0; rodada < 8; rodada++) {
+        card = cardVivo(cardOrig);
+        if (!card) return { status: "sumiu", tentativas };
+        if (estadoDoCard(card) === true) return { status: "marcado", via: "(marcou com atraso)", ms: Date.now() - t0, tentativas };
+        // Mouse sobre o card primeiro: há grade que só mostra o quadradinho no hover, e o
+        // efeito de hover não pode ser confundido com a seleção.
+        hover(card.container);
+        await sleep(120);
+        // Relê: o hover pode ter redesenhado o card, e a grade pode ter recarregado nesse meio
+        // tempo. Alvos calculados no card antigo apontariam para nós fora da página.
+        card = cardVivo(cardOrig);
+        if (!card) return { status: "sumiu", tentativas };
+        const alvos = alvosDeMarcacao(card).filter((a) => !usados.has(a.chave));
+        alvos.sort((a, b) => (b.chave === alvoQueFuncionou) - (a.chave === alvoQueFuncionou));
+        const alvo = alvos[0];
+        if (!alvo) break;
+        hover(alvo.el);
+        const base = await linhaDeBase(cardOrig);
+        const agora = cardVivo(cardOrig);
+        if (alvo.el.isConnected === false || !agora || !contemComposto(agora.container, alvo.el)) {
+          // A grade mudou durante a espera: o clique iria para o vazio — ou para OUTRO produto,
+          // se o nó foi reaproveitado. Recalcula no card de agora.
+          if (++redesenhos > 3) break;
+          continue;
+        }
+        // Última conferência, colada no clique: a resposta atrasada de um clique anterior pode
+        // ter acabado de marcar o produto — clicar de novo agora desmarcaria.
+        const estadoAgora = estadoDoCard(agora);
+        if (tentativas.length && (estadoAgora === true || (estadoAgora !== false && janelaRegistrou(antesDeTudo, sinaisGlobais())))) {
+          return { status: "marcado", via: "(o clique anterior pegou com atraso)", ms: Date.now() - t0, tentativas };
+        }
+        usados.add(alvo.chave);
+        realClick(alvo.el, alvo.x, alvo.y);
+        const r = await esperarEfeito(cardOrig, base, 2500);
+        tentativas.push(`${alvo.nome} → ${r.txt}`);
+        if (r.marcado) {
+          alvoQueFuncionou = alvo.chave;
+          return { status: "marcado", via: alvo.nome, fraco: !!r.fraco, ms: Date.now() - t0, tentativas };
+        }
+        if (r.mudou) return { status: "incerto", via: alvo.nome, ms: Date.now() - t0, tentativas };
+        // nada mudou: é seguro tentar o próximo alvo
+      }
+      return { status: "semEfeito", ms: Date.now() - t0, tentativas };
+    } finally {
+      const vivo = cardVivo(cardOrig);
+      if (vivo) sairDoHover(vivo.container);
+    }
+  }
 
   function containerRolavel() {
     const raiz = containerModalFavoritos();
@@ -874,9 +1300,8 @@
   }
 
   /** O botão "Confirmar" fica apagado enquanto nada está selecionado — é um bom termômetro. */
-  function confirmarHabilitado() {
-    const raiz = containerModalFavoritos();
-    const btn = (raiz && acharDentro(raiz, ["confirmar"])) || acharPorTexto(["confirmar"], "button,div,span", true);
+  const botaoConfirmar = (raiz) => (raiz && acharDentro(raiz, ["confirmar"])) || acharPorTexto(["confirmar"], "button,div,span", true);
+  function confirmarHabilitado(raiz = containerModalFavoritos(), btn = botaoConfirmar(raiz)) {
     if (!btn) return false;
     if (btn.disabled === true || btn.getAttribute?.("aria-disabled") === "true") return false;
     const cls = String(btn.className || "");
@@ -988,6 +1413,8 @@
    */
   async function adicionarNaSacola(lote, opc) {
     log.length = 0;
+    avisouSemCheckbox = false;
+    let estruturaNoLog = false; // a estrutura de UM card por rodada basta para diagnosticar
     const limite = opc.limite || 50;
     const simular = opc.modo === "simular";
 
@@ -1067,45 +1494,73 @@
       }
       if (par.status !== "ok") continue;
       const card = par.card;
-      if (desabilitado(card) && !marcado(card)) {
-        reg(`indisponível (checkbox desabilitado): ${par.item.codigo} — ${card.titulo.slice(0, 40)}`);
+      const titulo = card.titulo.slice(0, 40);
+      const divergente = par.precoDivergente ? " (preço divergente, casou pelo título)" : "";
+      if (simular) {
+        // A simulação não clica: diz o que faria e EM QUE elemento clicaria.
+        const est = estadoDoCard(card);
+        if (est === true) {
+          pendentes.delete(par.item.codigo);
+          reg(`já estava na sacola (marcado em Meus Favoritos): ${par.item.codigo} — ${titulo}`);
+          selecionados.push({ ...par.item, jaEstava: true });
+        } else if (est === null && quadradinhoCheio(card)) {
+          reg(`parece já marcado (quadradinho preenchido): ${par.item.codigo} — ${titulo}; não clicaria, iria pelo link`);
+        } else if (cardDesabilitado(card)) {
+          reg(`indisponível (checkbox desabilitado): ${par.item.codigo} — ${titulo}`);
+        } else {
+          pendentes.delete(par.item.codigo);
+          const alvo = alvosDeMarcacao(card)[0];
+          selecionados.push({ ...par.item, jaEstava: false });
+          reg(`marcaria: ${par.item.codigo} — ${titulo}${divergente} · clicaria em ${alvo ? alvo.nome : "(nenhum alvo)"}`);
+        }
+        if (!estruturaNoLog) {
+          estruturaNoLog = true;
+          reg(`estrutura do card: ${resumoDoCard(card)}`);
+        }
+        continue;
+      }
+      const m = await marcarCard(card);
+      if (m.status === "indisponivel") {
+        reg(`indisponível (checkbox desabilitado): ${par.item.codigo} — ${titulo}`);
         continue; // fica em `pendentes`: NÃO é "já está na sacola"
       }
-      pendentes.delete(par.item.codigo);
-      if (marcado(card)) {
-        reg(`já estava na sacola: ${par.item.codigo} — ${card.titulo.slice(0, 40)}`);
+      if (m.status === "jaMarcado") {
+        pendentes.delete(par.item.codigo);
+        reg(`já estava na sacola (marcado em Meus Favoritos): ${par.item.codigo} — ${titulo}`);
         selecionados.push({ ...par.item, jaEstava: true });
         continue;
       }
-      if (!simular) {
-        const antesConfirmar = confirmarHabilitado();
-        const assinaturaAntes = assinaturaCard(card);
-        // Três sinais, qualquer um serve: o checkbox marcado, o Confirmar acendendo (só vale
-        // para o primeiro da leva) ou o card mudando de aparência.
-        const pegou = () => marcado(card) || (!antesConfirmar && confirmarHabilitado()) || assinaturaCard(card) !== assinaturaAntes;
-        // O checkbox da Shopee é ESTILIZADO: o <input> real fica invisível e o quadrado que
-        // se vê é um <span> irmão dentro de um <label>. Clicar só no input escondido era
-        // ignorado pelo React — e, sem sinal, a extensão desistia sem tentar outro alvo. Agora:
-        // cascata de alvos, do mais provável ao mais amplo, conferindo o ESTADO após cada um,
-        // e parando no primeiro que pegar (clicar de novo depois de pegar desmarcaria).
-        for (const alvo of alvosDeMarcacao(card)) {
-          if (pegou()) break;
-          realClick(alvo);
-          if (await esperar(pegou, 700, 100)) break;
-        }
-        const ok = pegou() || (await esperar(pegou, 800, 200));
-        if (!ok) {
-          // Nenhum sinal visível — mas o clique pode ter pegado. Em vez de dar como perdido,
-          // confirma junto e deixa a CONTAGEM da sacola dizer se entrou.
-          incertos.push(par);
-          reg(`marcação incerta (sem sinal na tela; confiro pela contagem): ${par.item.codigo} — ${card.titulo.slice(0, 40)}`);
-          continue;
-        }
+      if (m.status === "pareceMarcado") {
+        // Clicar desmarcaria; afirmar "já está" poderia sumir com uma venda. Fica em
+        // `pendentes`: pelo link, a própria Shopee diz se o produto já está na sacola.
+        reg(`parece já marcado (quadradinho preenchido): ${par.item.codigo} — ${titulo}; não clico, vai pelo link`);
+        continue;
       }
-      selecionados.push({ ...par.item, jaEstava: false });
-      reg(`${simular ? "marcaria" : "marcado"}: ${par.item.codigo} — ${card.titulo.slice(0, 40)}${par.precoDivergente ? " (preço divergente, casou pelo título)" : ""}`);
+      if (m.status === "marcado") {
+        pendentes.delete(par.item.codigo);
+        selecionados.push({ ...par.item, jaEstava: false });
+        reg(`marcado: ${par.item.codigo} — ${titulo}${divergente} · via ${m.via} em ${m.ms}ms${m.fraco ? " (pela aparência)" : ""}`);
+        continue;
+      }
+      // Falhou: registra o que tentou e COMO a Shopee desenhou este card — é o que permite
+      // ajustar a extensão à tela real sem adivinhar.
+      reg(`tentativas em ${par.item.codigo}: ${m.tentativas.join(" | ") || "—"}`);
+      if (!estruturaNoLog) {
+        estruturaNoLog = true;
+        reg(`estrutura do card: ${resumoDoCard(cardVivo(card) || card)}`);
+      }
+      if (m.status === "incerto") {
+        // Algo mudou mas o checkbox não confirma: confirma junto e deixa a CONTAGEM decidir.
+        pendentes.delete(par.item.codigo);
+        incertos.push(par);
+        reg(`marcação incerta (confiro pela contagem): ${par.item.codigo} — ${titulo}`);
+      } else {
+        // Nenhum clique mudou nada: o produto NÃO está selecionado. Fica em `pendentes` e vai
+        // pelo link, sem passar por um "Confirmar" que não adicionaria nada.
+        reg(`não consegui marcar (${m.status === "sumiu" ? "o card sumiu da tela" : "nenhum clique teve efeito"}): ${par.item.codigo} — ${titulo}`);
+      }
     }
-    if (pendentes.size) reg(`não estavam no topo (vão por Importar via URL se tiverem link): ${[...pendentes.keys()].join(", ")}`);
+    if (pendentes.size) reg(`não marcados em Meus Favoritos (vão por Importar via URL se tiverem link): ${[...pendentes.keys()].join(", ")}`);
 
     const novos = selecionados.filter((s) => !s.jaEstava);
     const importaveis = () => [...pendentes.values()].filter((it) => it.url);
@@ -1326,20 +1781,16 @@
       reg(`busca "${termo}" (${item.codigo}): ${cards.length} resultado(s), ${par && par.status === "ambiguo" ? "ambíguo" : "nenhum casou"}`);
       return { ok: false, motivo: par && par.status === "ambiguo" ? "ambiguo" : "naoAchado" };
     }
-    if (marcado(par.card)) {
+    const m = await marcarCard(par.card);
+    if (m.status === "jaMarcado") {
       reg(`busca ${item.codigo}: já estava marcado/na sacola`);
       await fecharModais();
       return { ok: true, jaEstava: true };
     }
-    if (desabilitado(par.card)) {
+    if (m.status === "indisponivel") {
       reg(`busca ${item.codigo}: indisponível (checkbox desabilitado)`);
       return { ok: false, motivo: "indisponivel" };
     }
-    const assinaturaAntes = assinaturaCard(par.card);
-    const antesConfirmar = confirmarHabilitado();
-    const pegou = () => marcado(par.card) || (!antesConfirmar && confirmarHabilitado()) || assinaturaCard(par.card) !== assinaturaAntes;
-    realClick(par.card.input || par.card.container);
-    await esperar(pegou, 1500, 200);
     const conf = acharPorTexto(["confirmar"], "button,div,span", true);
     if (!conf || !confirmarHabilitado()) {
       reg(`busca ${item.codigo}: "Confirmar" não ficou disponível`);
@@ -1463,9 +1914,11 @@
     if (cards.length) {
       const pares = casarLoteComCards([item], cards);
       const par = pares[0];
-      if (par && par.status === "ok" && !marcado(par.card)) {
-        realClick(par.card.input || par.card.container);
-        await sleep(400);
+      // Só clica quando o checkbox diz, com certeza, "desmarcado": o produto convertido costuma
+      // vir marcado, e um marcador desenhado de estado ilegível seria DESMARCADO pelo clique.
+      if (par && par.status === "ok" && estadoDoCard(par.card) === false) {
+        const m = await marcarCard(par.card);
+        if (m.status !== "marcado" && m.status !== "jaMarcado") reg(`importar ${item.codigo}: marcar o produto convertido: ${m.tentativas.join(" | ") || m.status}`);
       } else if (par && par.status === "naoAchado" && cards.length > 1) {
         reg(`importar ${item.codigo}: apareceram ${cards.length} produtos e nenhum casa com o nome — não confirmo`);
         await fecharModais();
