@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Achadinhos Shopee</title>
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <div id="app" class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <img class="brand-icon" src="/icon-128.png" alt="" width="40" height="40" />
+          <div>
+            <div class="brand-title">Achadinhos</div>
+            <div class="brand-sub">Shopee Afiliados</div>
+          </div>
+        </div>
+        <nav class="nav" id="nav">
+          <button class="nav-item active" data-view="deals">🔥 <span>Achadinhos</span></button>
+          <button class="nav-item" data-view="search">🔎 <span>Buscar</span></button>
+          <button class="nav-item" data-view="monitor">📡 <span>Monitoramento</span></button>
+          <button class="nav-item" data-view="live">🎥 <span>Lista da Live</span> <b class="badge" id="live-count">0</b></button>
+          <button class="nav-item" data-view="settings">⚙️ <span>Configurações</span></button>
+        </nav>
+        <div class="sidebar-footer">
+          <div id="mode-badge" class="mode mode-mock">DEMO</div>
+          <div class="scan-box" id="scan-box">
+            <div class="scan-line" id="scan-last">Última varredura: —</div>
+            <div class="scan-line" id="scan-next">Próxima: —</div>
+            <button class="btn btn-sm btn-accent" id="scan-now">▶ Varrer agora</button>
+          </div>
+          <div class="version" id="version"></div>
+        </div>
+      </aside>
+      <main class="content" id="content"></main>
+    </div>
+    <div id="toasts" class="toasts"></div>
+    <div id="modal-root"></div>
+  </body>
+</html>

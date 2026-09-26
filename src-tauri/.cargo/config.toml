@@ -1,0 +1,3 @@
+# Limita o cargo a 1 job paralelo (pedido: não sobrecarregar o PC).
+[build]
+jobs = 1

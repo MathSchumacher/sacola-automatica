@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+*.log
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.synespark/
+extension.rar
+src-tauri/target/
+src-tauri/gen/schemas/
+.env
+.env.*
+!.env.example

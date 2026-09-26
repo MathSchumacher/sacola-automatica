@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "Sacolinha Automática",
+  "description": "Lê os códigos de produto no chat da sua live, favorita cada um e coloca na sacolinha — sem digitar um por um.",
+  "version": "1.9.1",
+  "icons": {
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "notifications",
+    "alarms",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "https://shopee.com.br/*",
+    "https://*.shopee.com.br/*",
+    "https://br.shp.ee/*",
+    "https://shope.ee/*",
+    "http://127.0.0.1:47831/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Sacolinha Automática"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://live.shopee.com.br/*"
+      ],
+      "js": [
+        "shared/pt-modelo.js",
+        "shared/parse.js",
+        "content-live.js",
+        "content-bag.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://shopee.com.br/*"
+      ],
+      "js": [
+        "shared/pt-modelo.js",
+        "shared/parse.js",
+        "content-product.js"
+      ],
+      "run_at": "document_end"
+    }
+  ]
+}
