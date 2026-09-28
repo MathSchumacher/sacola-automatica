@@ -359,6 +359,12 @@
       for (let i = 0; i < 6 && el; i++) {
         el = el.parentElement;
         if (!el || vistos.has(el)) break;
+        // Um card tem UM checkbox. Um ancestral com mais de um é a grade (ou o corpo da janela):
+        // subindo a partir de um checkbox fora dos cards ("Selecionar todos"), a busca parava
+        // nele e o primeiro título lá dentro — o do produto MAIS RECENTE — virava um card
+        // fantasma com o checkbox errado. Era o "ignora sempre o do topo": o clique ia num
+        // checkbox inerte e o produto acabava no Importar via URL.
+        if (el.querySelectorAll(SEL_CHECKBOX).length > 1) break;
         if (!visivel(el)) continue;
         const titulo = tituloDoCard(el);
         if (titulo && titulo.length >= 12 && titulo.length <= 200) {
@@ -907,7 +913,7 @@
         }
         usados.add(alvo.chave);
         realClick(alvo.el, alvo.x, alvo.y);
-        const r = await esperarEfeito(cardOrig, base, 2500);
+        const r = await esperarEfeito(cardOrig, base, 1500);
         tentativas.push(`${alvo.nome} → ${r.txt}`);
         if (r.marcado) {
           alvoQueFuncionou = alvo.chave;
@@ -1474,7 +1480,7 @@
     // O produto favoritado por ÚLTIMO pode ainda não estar na grade: a Shopee mostra a lista
     // que já tinha e insere o novo no topo alguns instantes depois. Uma leitura só o perdia —
     // era "marca todos menos o mais recente", e ele ia parar no Importar via URL. Agora, o que
-    // não foi achado é procurado de novo, por até 8 s, sempre que a grade mudar.
+    // não foi achado é procurado de novo, por até 3 s, sempre que a grade mudar.
     const t0Topo = Date.now();
     let assinaturaGrade = "";
     let passada = 0;
@@ -1483,8 +1489,8 @@
       const todosCards = cardsFavoritos();
       const assinaturaAgora = todosCards.map((c) => c.titulo).join("|");
       if (passada && assinaturaAgora === assinaturaGrade) {
-        if (Date.now() - t0Topo > 8000) break;
-        await sleep(700);
+        if (Date.now() - t0Topo > 3000) break;
+        await sleep(500);
         continue;
       }
       assinaturaGrade = assinaturaAgora;
@@ -1583,8 +1589,8 @@
         }
       }
       procurar = naoAchados;
-      if (!procurar.length || Date.now() - t0Topo > 8000) break;
-      await sleep(700);
+      if (!procurar.length || Date.now() - t0Topo > 3000) break;
+      await sleep(500);
     }
     if (procurar.length) reg(`não apareceram no topo em ${((Date.now() - t0Topo) / 1000).toFixed(1)}s: ${procurar.map((i) => i.codigo).join(", ")}`);
     if (pendentes.size) reg(`não marcados em Meus Favoritos (vão por Importar via URL se tiverem link): ${[...pendentes.keys()].join(", ")}`);

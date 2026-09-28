@@ -24,7 +24,7 @@
 //   confiavel   o checkbox só aceita clique "de pessoa" (isTrusted) — o label.click() passa, porque o
 //               Chrome repassa o clique do label ao input como confiável
 //   ignora      o checkbox não responde a nada: simula a tela em que a extensão não consegue marcar
-// Extras: &manual=1 simula a dona adicionando o 1º produto na mão (6 s depois de abrir a janela);
+// Extras: &cabecalho=1 põe um checkbox "Todos" no cabeçalho da grade (fora dos cards); &manual=1 simula a dona adicionando o 1º produto na mão (6 s depois de abrir a janela);
 // &semContador=1 tira o "N produto(s) selecionado(s)"; &cardNeutro=1 tira a classe de
 // seleção do card (só o quadradinho muda de cor).
 //
@@ -313,6 +313,9 @@
                 "div",
                 { className: "conteudo" },
                 h("input", { className: "campo", placeholder: "Buscar produtos" }),
+                params.get("cabecalho")
+                  ? h("div", { className: "grid-cabecalho" }, h("input", { type: "checkbox", readOnly: true, checked: false, onClick: (e) => e.preventDefault() }), h("span", null, "Todos"))
+                  : null,
                 h(
                   "div",
                   { className: "grid", key: "g" + geracao },
