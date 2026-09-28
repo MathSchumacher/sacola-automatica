@@ -640,6 +640,9 @@
    *  a referência antiga fica solta e clicar nela não faz nada na tela. Reacha pelo título —
    *  e só se ele for único, para nunca trocar de produto. */
   function cardVivo(card) {
+    // Janela de favoritos fechada (a dona confirmou na mão, por exemplo): não há card nenhum.
+    // Sem isto, a busca pelo título caía nas linhas da "Lista de produtos" atrás da janela.
+    if (!modalFavoritosAberto()) return null;
     if (card.container && card.container.isConnected !== false && visivel(card.container) && aindaEhOMesmo(card)) return card;
     const alvo = norm(card.titulo);
     const iguais = cardsFavoritos().filter((c) => norm(c.titulo) === alvo);
@@ -1468,98 +1471,122 @@
     const janela = Math.min(Math.max(pendentes.size + 3, 4), 8);
     const pronto = await esperarGridEstavel();
     reg(`grid de favoritos: ${pronto.cards} card(s) em ${pronto.ms}ms${pronto.estourou ? " (não estabilizou)" : ""}`);
-    const todosCards = cardsFavoritos();
-    const cards = todosCards.slice(0, janela);
-    reg(`topo de Meus Favoritos: ${cards.length} card(s) examinados (janela ${janela}, ${todosCards.length} visíveis)`);
-    if (!todosCards.length) semCards = true;
-    const pares = casarLoteComCards([...pendentes.values()], cards);
-    for (const par of pares) {
-      if (par.status === "naoAchado") {
-        // Diz o que viu, para o log explicar POR QUE o produto não casou.
-        const it = par.item;
-        reg(
-          `sem card para ${it.codigo}: nome "${(it.nome || "").slice(0, 40)}" preço ${it.preco == null ? "?" : it.preco}${it.precoMax != null && it.precoMax !== it.preco ? "–" + it.precoMax : ""}; topo: ${cards
-            .slice(0, 6)
-            .map((c) => `"${c.titulo.slice(0, 24)}" ${c.preco == null ? "?" : c.preco}${c.precoMax != null && c.precoMax !== c.preco ? "–" + c.precoMax : ""}`)
-            .join(" | ")}`,
-        );
-      }
-      // Só o que ENTRA de novo consome vaga; itens que já estavam não ocupam espaço novo.
-      if (contaNovos() >= espaco) break;
-      if (par.status === "ambiguo") {
-        reg(`AMBÍGUO, não vou marcar: ${par.item.codigo} — "${(par.item.nome || "").slice(0, 40)}" casa com ${par.quantos} produtos`);
-        ambiguos.add(par.item.codigo);
-        pendentes.delete(par.item.codigo);
+    // O produto favoritado por ÚLTIMO pode ainda não estar na grade: a Shopee mostra a lista
+    // que já tinha e insere o novo no topo alguns instantes depois. Uma leitura só o perdia —
+    // era "marca todos menos o mais recente", e ele ia parar no Importar via URL. Agora, o que
+    // não foi achado é procurado de novo, por até 8 s, sempre que a grade mudar.
+    const t0Topo = Date.now();
+    let assinaturaGrade = "";
+    let passada = 0;
+    let procurar = [...pendentes.values()];
+    while (procurar.length) {
+      const todosCards = cardsFavoritos();
+      const assinaturaAgora = todosCards.map((c) => c.titulo).join("|");
+      if (passada && assinaturaAgora === assinaturaGrade) {
+        if (Date.now() - t0Topo > 8000) break;
+        await sleep(700);
         continue;
       }
-      if (par.status !== "ok") continue;
-      const card = par.card;
-      const titulo = card.titulo.slice(0, 40);
-      const divergente = par.precoDivergente ? " (preço divergente, casou pelo título)" : "";
-      if (simular) {
-        // A simulação não clica: diz o que faria e EM QUE elemento clicaria.
-        const est = estadoDoCard(card);
-        if (est === true) {
+      assinaturaGrade = assinaturaAgora;
+      passada++;
+      const cards = todosCards.slice(0, janela);
+      reg(`topo de Meus Favoritos (${passada}ª leitura): ${cards.length} card(s) examinados (janela ${janela}, ${todosCards.length} visíveis)`);
+      if (!todosCards.length) semCards = true;
+      const naoAchados = [];
+      const pares = casarLoteComCards(procurar, cards);
+      for (const par of pares) {
+        if (par.status === "naoAchado") {
+          naoAchados.push(par.item);
+          // Diz o que viu, para o log explicar POR QUE o produto não casou.
+          const it = par.item;
+          reg(
+            `sem card para ${it.codigo}: nome "${(it.nome || "").slice(0, 40)}" preço ${it.preco == null ? "?" : it.preco}${it.precoMax != null && it.precoMax !== it.preco ? "–" + it.precoMax : ""}; topo: ${cards
+              .slice(0, 6)
+              .map((c) => `"${c.titulo.slice(0, 24)}" ${c.preco == null ? "?" : c.preco}${c.precoMax != null && c.precoMax !== c.preco ? "–" + c.precoMax : ""}`)
+              .join(" | ")}`,
+          );
+        }
+        // Só o que ENTRA de novo consome vaga; itens que já estavam não ocupam espaço novo.
+        if (contaNovos() >= espaco) break;
+        if (par.status === "ambiguo") {
+          reg(`AMBÍGUO, não vou marcar: ${par.item.codigo} — "${(par.item.nome || "").slice(0, 40)}" casa com ${par.quantos} produtos`);
+          ambiguos.add(par.item.codigo);
+          pendentes.delete(par.item.codigo);
+          continue;
+        }
+        if (par.status !== "ok") continue;
+        const card = par.card;
+        const titulo = card.titulo.slice(0, 40);
+        const divergente = par.precoDivergente ? " (preço divergente, casou pelo título)" : "";
+        if (simular) {
+          // A simulação não clica: diz o que faria e EM QUE elemento clicaria.
+          const est = estadoDoCard(card);
+          if (est === true) {
+            pendentes.delete(par.item.codigo);
+            reg(`já estava na sacola (marcado em Meus Favoritos): ${par.item.codigo} — ${titulo}`);
+            selecionados.push({ ...par.item, jaEstava: true });
+          } else if (est === null && quadradinhoCheio(card)) {
+            reg(`parece já marcado (quadradinho preenchido): ${par.item.codigo} — ${titulo}; não clicaria, iria pelo link`);
+          } else if (cardDesabilitado(card)) {
+            reg(`indisponível (checkbox desabilitado): ${par.item.codigo} — ${titulo}`);
+          } else {
+            pendentes.delete(par.item.codigo);
+            const alvo = alvosDeMarcacao(card)[0];
+            selecionados.push({ ...par.item, jaEstava: false });
+            reg(`marcaria: ${par.item.codigo} — ${titulo}${divergente} · clicaria em ${alvo ? alvo.nome : "(nenhum alvo)"}`);
+          }
+          if (!estruturaNoLog) {
+            estruturaNoLog = true;
+            reg(`estrutura do card: ${resumoDoCard(card)}`);
+          }
+          continue;
+        }
+        const m = await marcarCard(card);
+        if (m.status === "indisponivel") {
+          reg(`indisponível (checkbox desabilitado): ${par.item.codigo} — ${titulo}`);
+          continue; // fica em `pendentes`: NÃO é "já está na sacola"
+        }
+        if (m.status === "jaMarcado") {
           pendentes.delete(par.item.codigo);
           reg(`já estava na sacola (marcado em Meus Favoritos): ${par.item.codigo} — ${titulo}`);
           selecionados.push({ ...par.item, jaEstava: true });
-        } else if (est === null && quadradinhoCheio(card)) {
-          reg(`parece já marcado (quadradinho preenchido): ${par.item.codigo} — ${titulo}; não clicaria, iria pelo link`);
-        } else if (cardDesabilitado(card)) {
-          reg(`indisponível (checkbox desabilitado): ${par.item.codigo} — ${titulo}`);
-        } else {
-          pendentes.delete(par.item.codigo);
-          const alvo = alvosDeMarcacao(card)[0];
-          selecionados.push({ ...par.item, jaEstava: false });
-          reg(`marcaria: ${par.item.codigo} — ${titulo}${divergente} · clicaria em ${alvo ? alvo.nome : "(nenhum alvo)"}`);
+          continue;
         }
+        if (m.status === "pareceMarcado") {
+          // Clicar desmarcaria; afirmar "já está" poderia sumir com uma venda. Fica em
+          // `pendentes`: pelo link, a própria Shopee diz se o produto já está na sacola.
+          reg(`parece já marcado (quadradinho preenchido): ${par.item.codigo} — ${titulo}; não clico, vai pelo link`);
+          continue;
+        }
+        if (m.status === "marcado") {
+          pendentes.delete(par.item.codigo);
+          selecionados.push({ ...par.item, jaEstava: false });
+          reg(`marcado: ${par.item.codigo} — ${titulo}${divergente} · via ${m.via} em ${m.ms}ms${m.fraco ? " (pela aparência)" : ""}`);
+          continue;
+        }
+        // Falhou: registra o que tentou e COMO a Shopee desenhou este card — é o que permite
+        // ajustar a extensão à tela real sem adivinhar.
+        reg(`tentativas em ${par.item.codigo}: ${m.tentativas.join(" | ") || "—"}`);
         if (!estruturaNoLog) {
           estruturaNoLog = true;
-          reg(`estrutura do card: ${resumoDoCard(card)}`);
+          reg(`estrutura do card: ${resumoDoCard(cardVivo(card) || card)}`);
         }
-        continue;
+        if (m.status === "incerto") {
+          // Algo mudou mas o checkbox não confirma: confirma junto e deixa a CONTAGEM decidir.
+          pendentes.delete(par.item.codigo);
+          incertos.push(par);
+          reg(`marcação incerta (confiro pela contagem): ${par.item.codigo} — ${titulo}`);
+        } else {
+          // Nenhum clique mudou nada: o produto NÃO está selecionado. Fica em `pendentes` e vai
+          // pelo link, sem passar por um "Confirmar" que não adicionaria nada.
+          reg(`não consegui marcar (${m.status === "sumiu" ? "o card sumiu da tela" : "nenhum clique teve efeito"}): ${par.item.codigo} — ${titulo}`);
+        }
       }
-      const m = await marcarCard(card);
-      if (m.status === "indisponivel") {
-        reg(`indisponível (checkbox desabilitado): ${par.item.codigo} — ${titulo}`);
-        continue; // fica em `pendentes`: NÃO é "já está na sacola"
-      }
-      if (m.status === "jaMarcado") {
-        pendentes.delete(par.item.codigo);
-        reg(`já estava na sacola (marcado em Meus Favoritos): ${par.item.codigo} — ${titulo}`);
-        selecionados.push({ ...par.item, jaEstava: true });
-        continue;
-      }
-      if (m.status === "pareceMarcado") {
-        // Clicar desmarcaria; afirmar "já está" poderia sumir com uma venda. Fica em
-        // `pendentes`: pelo link, a própria Shopee diz se o produto já está na sacola.
-        reg(`parece já marcado (quadradinho preenchido): ${par.item.codigo} — ${titulo}; não clico, vai pelo link`);
-        continue;
-      }
-      if (m.status === "marcado") {
-        pendentes.delete(par.item.codigo);
-        selecionados.push({ ...par.item, jaEstava: false });
-        reg(`marcado: ${par.item.codigo} — ${titulo}${divergente} · via ${m.via} em ${m.ms}ms${m.fraco ? " (pela aparência)" : ""}`);
-        continue;
-      }
-      // Falhou: registra o que tentou e COMO a Shopee desenhou este card — é o que permite
-      // ajustar a extensão à tela real sem adivinhar.
-      reg(`tentativas em ${par.item.codigo}: ${m.tentativas.join(" | ") || "—"}`);
-      if (!estruturaNoLog) {
-        estruturaNoLog = true;
-        reg(`estrutura do card: ${resumoDoCard(cardVivo(card) || card)}`);
-      }
-      if (m.status === "incerto") {
-        // Algo mudou mas o checkbox não confirma: confirma junto e deixa a CONTAGEM decidir.
-        pendentes.delete(par.item.codigo);
-        incertos.push(par);
-        reg(`marcação incerta (confiro pela contagem): ${par.item.codigo} — ${titulo}`);
-      } else {
-        // Nenhum clique mudou nada: o produto NÃO está selecionado. Fica em `pendentes` e vai
-        // pelo link, sem passar por um "Confirmar" que não adicionaria nada.
-        reg(`não consegui marcar (${m.status === "sumiu" ? "o card sumiu da tela" : "nenhum clique teve efeito"}): ${par.item.codigo} — ${titulo}`);
-      }
+      procurar = naoAchados;
+      if (!procurar.length || Date.now() - t0Topo > 8000) break;
+      await sleep(700);
     }
+    if (procurar.length) reg(`não apareceram no topo em ${((Date.now() - t0Topo) / 1000).toFixed(1)}s: ${procurar.map((i) => i.codigo).join(", ")}`);
     if (pendentes.size) reg(`não marcados em Meus Favoritos (vão por Importar via URL se tiverem link): ${[...pendentes.keys()].join(", ")}`);
 
     const novos = selecionados.filter((s) => !s.jaEstava);
@@ -1945,6 +1972,13 @@
   async function importarPendentesPorUrl(pendentes, atualInicial, espaco, limite) {
     const adicionados = [];
     const jaEstavam = [];
+    // Reconfere a "Lista de produtos" AGORA: enquanto a extensão tentava marcar, a dona pode
+    // ter marcado e confirmado na mão — importar de novo duplicava o produto na sacola.
+    for (const it of jaNaSacolaPorTitulo([...pendentes.values()])) {
+      pendentes.delete(it.codigo);
+      jaEstavam.push(it.codigo);
+      reg(`já está na sacola (aparece na lista de produtos): ${it.codigo} — não importo pela URL`);
+    }
     const naoCresceram = []; // converteu e confirmou, mas a sacola não cresceu: já estava lá
     const tentados = []; // tentou importar e NÃO entrou — quem decide desistir é o service worker
     let atual = atualInicial;

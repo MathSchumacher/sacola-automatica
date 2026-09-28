@@ -81,6 +81,7 @@ const CENARIOS = {
   async: { v: "async", nota: "1.9.1: o 2º clique desmarcava a seleção ainda no servidor" },
   asyncLento: { v: "asyncLento", nota: "servidor de 3 s: espera enquanto o card mostra que está carregando" },
   tardio: { v: "tardio" },
+  recemFavoritado: { v: "recemFavoritado", nota: "o último favoritado só entra na grade 2,5 s depois: era 'marca todos menos o mais recente'" },
   instavel: { v: "instavel" },
   hover: { v: "hover" },
   link: { v: "link", nota: "o clique nunca pode abrir o link do produto na aba da live" },
@@ -97,6 +98,16 @@ const CENARIOS = {
         (r.log || []).some((l) => /^tentativas em AAA-BBB-CCC: .*nada mudou/.test(l)) &&
         (r.log || []).some((l) => /^estrutura do card: checkbox: .*input\.ant-checkbox-input/.test(l))) ||
       "devia ir pela URL e registrar tentativas + estrutura do card",
+  },
+  // A extensão não consegue marcar, a dona marca e confirma na mão enquanto ela tenta: o produto
+  // NÃO pode ser importado de novo pela URL (duplicava na sacola).
+  manualNoMeio: {
+    v: "ignora",
+    extras: ["manual"],
+    pelaUrl: true,
+    confere: (r, sacola) =>
+      (sacola.filter((id) => id === 1).length === 1 && !(r.importados || []).includes("AAA-BBB-CCC")) ||
+      `o 1º foi adicionado na mão e entrou de novo (sacola=${JSON.stringify(sacola)}, importados=${JSON.stringify(r.importados)})`,
   },
   foraDoTopo: { v: "antd", lote: [DESEMPENADEIRA, ALCA, FORA_DO_TOPO], confere: (r) => (r.importados || []).includes("GGG-HHH-III") || "o 3º devia entrar pela URL" },
   jaMarcado: { v: "desenhado", lote: [DESEMPENADEIRA, ALCA, PERFUME], confere: (r) => (r.jaEstavam || []).includes("PPP-QQQ-RRR") || "o perfume devia constar como 'já estava'" },
@@ -123,7 +134,7 @@ function avaliar(c, r, eventos, sacola) {
   }
   if (c.pelaUrl) {
     if (eventos.some((e) => /alternar/.test(e))) return "nada devia ter sido alternado";
-    const extra = c.confere(r);
+    const extra = c.confere(r, sacola);
     return extra === true ? null : extra;
   }
   if (quantas(1) !== 1 || quantas(2) !== 1) return `cada produto devia ser alternado 1 vez (1: ${quantas(1)}x, 2: ${quantas(2)}x)`;

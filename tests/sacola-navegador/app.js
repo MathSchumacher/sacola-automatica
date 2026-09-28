@@ -16,6 +16,7 @@
 //   async       a seleção passa pelo servidor (900 ms) e ALTERNA: um 2º clique antes da resposta desmarca
 //   asyncLento  o mesmo, com servidor lento (3 s, mais que a espera normal) e spinner no card enquanto processa
 //   tardio      a grade é recarregada (nós novos, mesma contagem) logo depois de aberta
+//   recemFavoritado  o produto favoritado por ÚLTIMO ainda não está na grade: entra no topo 2,5 s depois
 //   instavel    a grade ganha nós novos a cada 500 ms
 //   hover       o card muda de aparência com o mouse em cima (não pode parecer seleção)
 //   link        a imagem é um link para o produto e o marcador fica por cima dela, sem eventos
@@ -23,7 +24,8 @@
 //   confiavel   o checkbox só aceita clique "de pessoa" (isTrusted) — o label.click() passa, porque o
 //               Chrome repassa o clique do label ao input como confiável
 //   ignora      o checkbox não responde a nada: simula a tela em que a extensão não consegue marcar
-// Extras: &semContador=1 tira o "N produto(s) selecionado(s)"; &cardNeutro=1 tira a classe de
+// Extras: &manual=1 simula a dona adicionando o 1º produto na mão (6 s depois de abrir a janela);
+// &semContador=1 tira o "N produto(s) selecionado(s)"; &cardNeutro=1 tira a classe de
 // seleção do card (só o quadradinho muda de cor).
 //
 // window.__eventos registra cada seleção/desseleção feita PELO USUÁRIO (o teste confere que cada
@@ -201,13 +203,13 @@
 
   // ---------------- janelas ----------------
 
-  function AdicionarProdutos({ naSacola, onConfirmar, onFechar }) {
+  function AdicionarProdutos({ naSacola, onConfirmar, onFechar, adicionarNaMao }) {
     const [aba, setAba] = useState("fav");
     const [sel, setSel] = useState([]);
     const [geracao, setGeracao] = useState(0); // muda as chaves → nós novos
     const [url, setUrl] = useState("");
     const [convertido, setConvertido] = useState(null);
-    const [lista, setLista] = useState(FAVORITOS);
+    const [lista, setLista] = useState(V === "recemFavoritado" ? FAVORITOS.slice(1) : FAVORITOS);
     const [pendentes, setPendentes] = useState([]); // seleções esperando o "servidor"
 
     useEffect(() => {
@@ -217,6 +219,22 @@
         setLista(FAVORITOS.map((p) => ({ ...p })));
         setGeracao((g) => g + 1);
       }, 1400);
+      return () => clearTimeout(t);
+    }, []);
+    useEffect(() => {
+      if (V !== "recemFavoritado") return undefined;
+      const t = setTimeout(() => {
+        evento("produto recém-favoritado entrou no topo da grade");
+        setLista(FAVORITOS);
+      }, 2500);
+      return () => clearTimeout(t);
+    }, []);
+    useEffect(() => {
+      if (!params.get("manual")) return undefined;
+      const t = setTimeout(() => {
+        evento("DONA marcou o produto 1 e confirmou na mão");
+        adicionarNaMao(FAVORITOS[0]); // entra na sacola e a janela fecha, como no Confirmar
+      }, 6000);
       return () => clearTimeout(t);
     }, []);
     useEffect(() => {
@@ -372,6 +390,10 @@
         ? h(AdicionarProdutos, {
             naSacola: sacola,
             onFechar: () => setAdicionar(false),
+            adicionarNaMao: (p) => {
+              setSacola((s) => [...s, p]);
+              setAdicionar(false);
+            },
             onConfirmar: (novos, conv) => {
               evento(`CONFIRMAR: ${novos.map((p) => p.id).join(",")}${conv ? " +url" : ""}`);
               setSacola((s) => [...s, ...novos, ...(conv ? [conv] : [])]);
