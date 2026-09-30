@@ -178,7 +178,7 @@ function likeInTab(url, settings, item) {
           try {
             const atual = await chrome.windows.getLastFocused();
             if (atual && atual.id !== windowId && atual.id !== sender.tab.windowId) focoAnterior = atual.id;
-            await chrome.windows.update(sender.tab.windowId, { focused: true, state: "normal" });
+            await trazerJanela(sender.tab.windowId);
             await chrome.tabs.update(tabId, { active: true });
             log(`janela da Shopee estava coberta (${msg.motivo}): trouxe à frente para destravar (${item?.code || url})`);
             sendResponse({ ok: true });
@@ -235,7 +235,7 @@ function likeInTab(url, settings, item) {
         if (settings.openMode !== "activeTab") return; // sem foco é sem foco: não "destrava" roubando a tela
         try {
           await chrome.tabs.update(tabId, { active: true });
-          if (windowId != null) await chrome.windows.update(windowId, { focused: true, state: "normal" });
+          if (windowId != null) await trazerJanela(windowId);
           log(`aba demorou: dei foco para destravar (${item?.code || url})`);
         } catch {
           /* aba já fechada */
@@ -246,6 +246,21 @@ function likeInTab(url, settings, item) {
     // de sobra; 120 s era uma eternidade com a fila parada e o item "favoritando…".
     setTimeout(() => finish({ ok: false, code: "timeout", message: "página não respondeu em 50s" }), 50000);
   });
+}
+
+/** Traz uma janela à frente SEM mudar o tamanho dela. `state: "normal"` aqui tirava a janela do
+ *  maximizado — a dona via a janela do navegador "encolher sozinha". Só restaura se estiver
+ *  minimizada (aí não há como mostrar de outro jeito). */
+async function trazerJanela(windowId) {
+  let estado = null;
+  try {
+    estado = (await chrome.windows.get(windowId)).state;
+  } catch {
+    /* janela já fechada */
+  }
+  const mudanca = { focused: true };
+  if (estado === "minimized") mudanca.state = "normal";
+  await chrome.windows.update(windowId, mudanca);
 }
 
 /** Itens presos em "working" (o service worker pode ser morto no meio) voltam para a fila.
