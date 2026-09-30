@@ -17,6 +17,25 @@
   // Esperas pela PRÓPRIA Shopee (redirecionar, renderizar): o JavaScript dela também é
   // desacelerado quando a página está escondida, então esperamos mais por ela nesse caso.
   const folga = () => (document.hidden ? 3 : 1);
+  // Página ESCONDIDA que travou (a Shopee não navegou, não desenhou o botão): janela coberta por
+  // outra — o navegador não desenha o que está coberto, e o JavaScript da Shopee para junto. A
+  // extensão não tem como desenhar por ela: pede ao worker para trazer a janela à frente só até
+  // terminar (ele devolve o foco para onde a dona estava). Uma vez por trabalho.
+  let pediuTela = false;
+  async function pedirTelaSeEscondida(motivo) {
+    if (!document.hidden || pediuTela) return false;
+    pediuTela = true;
+    try {
+      const r = await chrome.runtime.sendMessage({ type: "preciso-de-tela", motivo });
+      if (r && r.ok) {
+        for (let i = 0; i < 20 && document.hidden; i++) await sleep(100);
+        return true;
+      }
+    } catch {
+      /* worker dormindo */
+    }
+    return false;
+  }
 
   const LIKE_WORDS = /^(curtir|favoritar|adicionar aos favoritos|like|curtido|favoritado|liked)\b/i;
   const LIKED_WORDS = /^(curtido|favoritado|liked)\b/i;
@@ -546,6 +565,13 @@
       await sleep(150);
       if (saiuDaHome()) return concluir();
     }
+    if (await pedirTelaSeEscondida("a busca não navegou com a janela coberta")) {
+      marca("janela trazida à frente em");
+      for (let i = 0; i < 20; i++) {
+        await sleep(150);
+        if (saiuDaHome()) return concluir();
+      }
+    }
     // ~2 s sem navegar: o campo pode ter sido trocado pelo React depois da colagem.
     // Reencontra, garante o valor e repete o Enter no nó ATUAL.
     campo = findSearchInput() || campo;
@@ -597,6 +623,7 @@
     for (let i = 0; i < 40 * folga(); i++) {
       // Redirecionou via SPA para o produto no MESMO documento → segue para o coração aqui mesmo.
       if (isProductUrl(location.href)) return { done: true, result: null };
+      if (i === 20) await pedirTelaSeEscondida("a busca não redirecionou com a janela coberta");
       const prob = pageProblem();
       if (prob) return { done: true, result: { ok: false, ...prob, url: location.href } };
       const body = (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 4000);
@@ -665,13 +692,14 @@
         if (prob) return { ok: false, ...prob, url: location.href };
       }
       btn = findLikeButton(calibrated);
+      if (!btn && i === 25) await pedirTelaSeEscondida("o produto não desenhou o botão com a janela coberta");
       if (!btn) await sleep(120);
     }
     const ids = idsFromUrl(location.href) || {};
     if (!btn) return { ok: false, code: "nobutton", message: "botão Curtir/Favoritar não encontrado — use a calibração", url: location.href, ...ids, ...(await lerProduto()) };
 
     // nome e preço são lidos na hora de devolver o resultado (página inteira já renderizada)
-    const base = async () => ({ url: location.href, ...ids, ...(await lerProduto()), busca: lerBusca() || undefined });
+    const base = async () => ({ url: location.href, ...ids, ...(await lerProduto()), busca: lerBusca() || undefined, precisouDeTela: pediuTela || undefined });
     // A página é React: clicar antes dela "hidratar" não faz nada. Em vez de um tempo fixo,
     // segue assim que o próprio botão estiver sob controle do React.
     for (let i = 0; i < 12; i++) {

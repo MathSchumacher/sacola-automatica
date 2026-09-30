@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Sacolinha Automática",
   "description": "Lê os códigos de produto no chat da sua live, favorita cada um e coloca na sacolinha — sem digitar um por um.",
-  "version": "1.9.8",
+  "version": "1.9.9",
   "icons": {
     "32": "icons/32.png",
     "48": "icons/48.png",

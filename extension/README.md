@@ -132,6 +132,15 @@ Um item podia ficar minutos em "favoritando…" com a fila parada. Medido num Ch
 
 Em **Configurações → Abrir produto em**, "janela separada, sem roubar o foco" abre cada produto numa janela própria que não toma o foco: dá para assistir a um vídeo ou trabalhar em outra coisa enquanto os códigos sobem. Esse modo existia, mas era "sujeito a congelamento": página escondida (aba de fundo, janela coberta) tem os temporizadores desacelerados pelo Chrome para 1 por segundo, cada espera de 120 ms virava 1 s e a busca estourava o prazo. Agora, escondida, a extensão espera por mensagens (não desaceleradas) em vez de `setTimeout`, e dá à Shopee 3× mais tempo para redirecionar e renderizar (o JavaScript dela continua desacelerado). Nesse modo ninguém dá foco à janela para "destravar", as janelas em paralelo também abrem sem foco, e a escolha **não** é desfeita ao atualizar a extensão (era). Deixe a janela num canto — pode ficar atrás de outras, mas não a minimize. O harness `fila-navegador.cjs --abrir=window|tab` roda os cenários com a página escondida.
 
+### A janela precisa estar visível — e como garantir isso
+
+Na prática, "janela sem foco" abre **atrás** da janela em que você está: coberta. No Windows, o Chrome/Brave trata janela coberta como invisível e para de desenhá-la — e o JavaScript da própria Shopee (a busca que navega, a página do produto que desenha o botão) para junto. Foi o que apareceu na live: "a busca não abriu o produto" com a URL parada na home, e "botão Curtir não encontrado". A extensão não tem como desenhar a página pela Shopee.
+
+Duas saídas:
+
+1. **Definitiva**: iniciar o Brave com `--disable-features=CalculateNativeWinOcclusion`. Janela coberta continua sendo desenhada, e o modo sem foco funciona sem interrupção nenhuma. No Windows: botão direito no atalho do Brave → Propriedades → em *Destino*, acrescente um espaço e essa opção depois do caminho (ex.: `"C:\...\brave.exe" --disable-features=CalculateNativeWinOcclusion`) → feche todas as janelas do Brave e abra pelo atalho.
+2. **Sem a opção**: quando a página está escondida **e** trava (busca que não navega, produto que não desenha o botão), a extensão pede ao service worker para trazer a janela à frente — isso rouba o foco por alguns segundos — e devolve o foco para onde você estava ao terminar. O item ganha a nota "a janela estava coberta: precisei trazê-la à frente". Se essa nota aparece em todo código, é sinal de que a janela fica sempre coberta: use a opção acima, ou deixe a janela num canto/segundo monitor onde nada a cubra.
+
 ## Volume alto (live cheia)
 
 O limite padrão passou a ser **600 favoritos por hora** (era 120, que virava gargalo com muita gente mandando código). Ao bater no teto a fila **avisa**: notificação, log e um alerta em amarelo no popup, em vez de parar em silêncio. A ordem é sempre **do código mais antigo para o mais recente**, mesmo com várias janelas favoritando em paralelo. Se uma aba ficar congelada em segundo plano, a extensão dá foco nela sozinha depois de 25 s para destravar.

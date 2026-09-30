@@ -104,7 +104,7 @@
             <option value="tab">aba em segundo plano (discreto; o Brave pode congelar)</option>
           </select>
         </div>
-        <div class="muted" style="margin-top:2px">"Janela separada" abre a Shopee numa janela própria que não toma o foco: você continua no que estava. Deixe essa janela em algum canto da tela — pode ficar atrás de outras, mas não a minimize.</div>
+        <div class="muted" style="margin-top:2px">"Janela separada" abre a Shopee numa janela própria que não toma o foco. <b>Ela precisa ficar visível</b> (num canto, num segundo monitor): janela coberta por outra não é desenhada pelo navegador e a Shopee trava — aí a extensão a traz à frente por alguns segundos para não perder o código. Para nunca precisar disso, inicie o Brave com <code>--disable-features=CalculateNativeWinOcclusion</code> (veja o README).</div>
         <div class="row"><label><input type="checkbox" id="sendToApp" /> Integrar com o app desktop</label></div>
         <div class="row">Intervalo entre favoritos: <input type="number" id="minDelay" min="2" /> a <input type="number" id="maxDelay" min="2" /> s · máx./hora <input type="number" id="maxPerHour" min="1" /></div>
         <div class="row">Favoritar em paralelo (máx. janelas): <input type="number" id="maxParalelo" min="1" max="6" /></div>

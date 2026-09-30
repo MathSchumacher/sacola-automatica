@@ -153,6 +153,7 @@ function likeInTab(url, settings, item) {
     let windowId = null;
     let previousTabId = null;
     let done = false;
+    let focoAnterior = null; // janela que tinha o foco quando precisamos trazer a nossa à frente
     const finish = (result) => {
       if (done) return;
       done = true;
@@ -160,13 +161,33 @@ function likeInTab(url, settings, item) {
       chrome.tabs.onRemoved.removeListener(onRemoved);
       if (windowId != null) chrome.windows.remove(windowId).catch(() => {});
       else if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+      // Trouxemos a janela à frente para destravar: devolve o foco para onde a dona estava.
+      if (focoAnterior != null) chrome.windows.update(focoAnterior, { focused: true }).catch(() => {});
       // devolve o foco para onde a usuária estava (a aba da live)
       if (previousTabId != null) chrome.tabs.update(previousTabId, { active: true }).catch(() => {});
       if (tabId != null) void chrome.storage.local.remove("pl:" + tabId);
       resolve(result);
     };
-    const onMsg = (msg, sender) => {
-      if (sender.tab && sender.tab.id === tabId && msg && msg.type === "like-result") finish(msg.result);
+    const onMsg = (msg, sender, sendResponse) => {
+      if (!sender.tab || sender.tab.id !== tabId || !msg) return;
+      if (msg.type === "like-result") finish(msg.result);
+      if (msg.type === "preciso-de-tela") {
+        // A página está coberta e travou. Traz a janela à frente (isso rouba o foco por alguns
+        // segundos — é o mal menor: sem isso o código falha) e anota para devolver depois.
+        (async () => {
+          try {
+            const atual = await chrome.windows.getLastFocused();
+            if (atual && atual.id !== windowId && atual.id !== sender.tab.windowId) focoAnterior = atual.id;
+            await chrome.windows.update(sender.tab.windowId, { focused: true, state: "normal" });
+            await chrome.tabs.update(tabId, { active: true });
+            log(`janela da Shopee estava coberta (${msg.motivo}): trouxe à frente para destravar (${item?.code || url})`);
+            sendResponse({ ok: true });
+          } catch (e) {
+            sendResponse({ ok: false, erro: String(e) });
+          }
+        })();
+        return true;
+      }
     };
     chrome.runtime.onMessage.addListener(onMsg);
     // Aba fechada (pela dona, ou pelo navegador): não há mais quem responda — falha na hora.
@@ -328,6 +349,7 @@ async function trabalhar(item, settings) {
           ? "já estava favoritado"
           : "favoritado";
       if (result.busca) cur.note += ` · ${result.busca}`;
+      if (result.precisouDeTela) cur.note += " · a janela estava coberta: precisei trazê-la à frente";
       fresh.stats.done = (fresh.stats.done || 0) + 1;
       fresh.stats.hourWindow.push(Date.now());
       try {
