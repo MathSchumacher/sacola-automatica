@@ -814,31 +814,22 @@ async function rodarSacola(modo) {
   return resultado;
 }
 
-/** Depois de uma rodada REAL, o lote perde: o que entrou, o que já estava e — para não ficar
- *  tentando o mesmo produto para sempre — o que já foi procurado várias vezes sem entrar
- *  (quase sempre é produto que já está na sacola por outro caminho). Uma importação via URL
- *  que falhou pesa 2; uma rodada em que o item só não apareceu no topo pesa 1. */
-const LIMITE_TENTATIVAS_LOTE = 4;
+/** Depois de uma rodada REAL: UMA chance por produto. Tudo o que estava no lote quando a rodada
+ *  começou sai dele — tenha entrado, ficado de fora, sobrado por sacola cheia ou falhado. Nada é
+ *  tentado de novo em rodada posterior: o lote guardava o que não entrou (até 4 tentativas, e
+ *  tudo em sacola cheia/entrada parcial) e, a cada produto novo favoritado, reinseria na sacola
+ *  produtos antigos que a dona já tinha REMOVIDO de propósito. Se não subiu na hora em que foi
+ *  favoritado, não sobe depois; o que já subiu jamais é tentado de novo.
+ *  Só fica no lote o que foi favoritado DURANTE a rodada (entrou depois do snapshot) e, se a
+ *  rodada nem chegou a olhar a tela (sem aba, janela que não abriu), o lote inteiro — aí ninguém
+ *  foi tentado ainda. */
 function loteAposSacola(atual, snapshot, r) {
-  const entraram = new Set([...(r.adicionados || []), ...(r.jaEstavam || [])]);
-  if (r.motivo === "nadaNovo") for (const b of snapshot) entraram.add(b.codigo);
-  const ficaram = new Set(r.examinou ? r.pendentes || [] : []);
-  const importFalhou = new Set(r.examinou ? r.importTentados || [] : []);
-  // Converteu o link, confirmou e a sacola NÃO cresceu: o produto já está lá. Insistir só
-  // reabriria a janela "Importar via URL" no mesmo produto a cada rodada.
-  const jaEstavaNaSacola = new Set(r.examinou ? r.importNaoCresceu || [] : []);
-  return atual.filter((b) => {
-    if (entraram.has(b.codigo)) return false;
-    if (jaEstavaNaSacola.has(b.codigo)) {
-      log(`sacola: ${b.codigo} não fez a contagem subir ao importar — considero que já está na sacola`);
-      return false;
-    }
-    if (!ficaram.has(b.codigo)) return true;
-    b.tentativas = (b.tentativas || 0) + (importFalhou.has(b.codigo) ? 2 : 1);
-    if (b.tentativas < LIMITE_TENTATIVAS_LOTE) return true;
-    log(`sacola: desisti de ${b.codigo} — tentei várias vezes e não entrou (provavelmente já está na sacola; se não estiver, adicione na mão)`);
-    return false;
-  });
+  const examinou = !!r.examinou || r.motivo === "cheia" || r.motivo === "nadaNovo";
+  if (!examinou) return atual;
+  const tentados = new Set(snapshot.map((b) => b.codigo));
+  const descartados = atual.filter((b) => tentados.has(b.codigo) && !(r.adicionados || []).includes(b.codigo) && !(r.jaEstavam || []).includes(b.codigo));
+  if (descartados.length) log(`sacola: ${descartados.map((b) => b.codigo).join(", ")} não entrou nesta rodada e NÃO será tentado de novo (uma chance por produto)`);
+  return atual.filter((b) => !tentados.has(b.codigo));
 }
 
 /** Motivos em que insistir sozinha só geraria janelas abrindo à toa na live. */
@@ -858,7 +849,7 @@ async function talvezRodarSacolaAutomatica() {
     // Sacola no limite: não adianta insistir sozinha (cada tentativa reabre a lista na live).
     // O lote fica guardado; o próximo produto favoritado dispara uma nova tentativa, e a dona
     // pode usar o botão do popup depois de liberar espaço. Favoritar continua normalmente.
-    log("sacola cheia — o lote fica guardado; tento de novo quando favoritar o próximo produto (ou pelo popup)");
+    log("sacola cheia — os produtos desta rodada saem do lote (uma chance por produto); favoritar continua");
     return;
   }
   if (r.motivo === "filaOcupada") {
