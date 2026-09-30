@@ -64,6 +64,7 @@ function renderDebug(ls, st) {
 }
 
 const MOTIVOS = {
+  selecaoVelha: "a janela \"Adicionar Produtos\" tem produtos antigos selecionados fora da vista — desmarque-os lá; não confirmei nada para não levá-los junto",
   naoAchado: "não achei esse produto nem no topo nem na busca de Meus Favoritos",
   filaOcupada: "ainda há produtos para favoritar — a sacola só entra depois que a fila zerar",
   loteVazio: "nenhum produto novo favoritado desde a última vez",

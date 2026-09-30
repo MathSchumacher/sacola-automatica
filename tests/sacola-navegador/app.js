@@ -24,7 +24,7 @@
 //   confiavel   o checkbox só aceita clique "de pessoa" (isTrusted) — o label.click() passa, porque o
 //               Chrome repassa o clique do label ao input como confiável
 //   ignora      o checkbox não responde a nada: simula a tela em que a extensão não consegue marcar
-// Extras: &limite=N faz a sacola recusar acima de N produtos com o aviso da Shopee; &cabecalho=1 põe um checkbox "Todos" no cabeçalho da grade (fora dos cards); &manual=1 simula a dona adicionando o 1º produto na mão (6 s depois de abrir a janela);
+// Extras: &velhos=3,4 abre a janela com esses produtos JÁ marcados (marcação antiga que a Shopee guardou; eles não estão na sacola); &limite=N faz a sacola recusar acima de N produtos com o aviso da Shopee; &cabecalho=1 põe um checkbox "Todos" no cabeçalho da grade (fora dos cards); &manual=1 simula a dona adicionando o 1º produto na mão (6 s depois de abrir a janela);
 // &semContador=1 tira o "N produto(s) selecionado(s)"; &cardNeutro=1 tira a classe de
 // seleção do card (só o quadradinho muda de cor).
 //
@@ -205,7 +205,7 @@
 
   function AdicionarProdutos({ naSacola, onConfirmar, onFechar, adicionarNaMao }) {
     const [aba, setAba] = useState("fav");
-    const [sel, setSel] = useState([]);
+    const [sel, setSel] = useState(() => (params.get("velhos") || "").split(",").filter(Boolean).map(Number));
     const [geracao, setGeracao] = useState(0); // muda as chaves → nós novos
     const [url, setUrl] = useState("");
     const [convertido, setConvertido] = useState(null);

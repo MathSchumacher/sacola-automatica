@@ -121,6 +121,14 @@ const CENARIOS = {
       (r.motivo === "cheia" && r.limiteReal === 22 && !eventos.some((e) => /\+url/.test(e)) && (r.pendentes || []).length === 3 && sacola.length === 2) ||
       `esperava 'cheia' sem import (motivo=${r.motivo}, pendentes=${JSON.stringify(r.pendentes)}, eventos=${eventos.join(" | ")})`,
   },
+  // A janela abre com produtos 3 e 4 já marcados (marcação antiga guardada pela Shopee; não
+  // estão na sacola). Confirmar sem desmarcá-los levava os dois junto — "um ID sobe vários
+  // produtos antigos". Só 1 e 2 podem entrar.
+  selecaoVelha: {
+    v: "antd",
+    extras: ["velhos=3,4"],
+    confere: (r, sacola) => (!sacola.includes(3) && !sacola.includes(4) && sacola.length === 3) || `produtos antigos marcados entraram junto (sacola=${JSON.stringify(sacola)})`,
+  },
   foraDoTopo: { v: "antd", lote: [DESEMPENADEIRA, ALCA, FORA_DO_TOPO], confere: (r) => (r.importados || []).includes("GGG-HHH-III") || "o 3º devia entrar pela URL" },
   jaMarcado: { v: "desenhado", lote: [DESEMPENADEIRA, ALCA, PERFUME], confere: (r) => (r.jaEstavam || []).includes("PPP-QQQ-RRR") || "o perfume devia constar como 'já estava'" },
   jaMarcadoIlegivel: {
@@ -137,8 +145,9 @@ function avaliar(c, r, eventos, sacola) {
   if (!r) return "sem resposta da página";
   const quantas = (id) => eventos.filter((e) => new RegExp(`alternar ${id} ->`).test(e)).length;
   if (eventos.some((e) => /LINK CLICADO/.test(e))) return "clicou no link do produto";
-  const alheios = eventos.filter((e) => /alternar \d+/.test(e) && !/alternar [12] ->/.test(e));
-  if (alheios.length) return `mexeu em produto fora do lote: ${alheios.join("; ")}`;
+  // Marcar produto fora do lote é o erro; DESMARCAR um que a Shopee guardou marcado é a limpeza certa.
+  const alheios = eventos.filter((e) => /alternar \d+ -> true/.test(e) && !/alternar [12] ->/.test(e));
+  if (alheios.length) return `marcou produto fora do lote: ${alheios.join("; ")}`;
   if (c.modo === "simular") {
     if (eventos.some((e) => /alternar|CONFIRMAR/.test(e))) return "a simulação clicou em algo";
     if (!r.ok || !r.simulado || JSON.stringify(r.adicionados) !== JSON.stringify(["AAA-BBB-CCC", "DDD-EEE-FFF"])) return "a simulação não relatou os 2 produtos";
@@ -157,7 +166,7 @@ function avaliar(c, r, eventos, sacola) {
   if (!eventos.some((e) => /CONFIRMAR: (1,2|2,1)( |$)/.test(e))) return "os 2 não foram confirmados juntos pelo checkbox";
   if (!r.ok || !sacola.includes(1) || !sacola.includes(2)) return `a sacola não recebeu os 2 (ok=${r.ok}, motivo=${r.motivo})`;
   if (c.confere) {
-    const extra = c.confere(r);
+    const extra = c.confere(r, sacola, eventos);
     if (extra !== true) return extra;
   }
   return null;

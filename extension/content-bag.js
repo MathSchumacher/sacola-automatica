@@ -1282,7 +1282,49 @@
     } else {
       reg(`aba 'Meus Favoritos': cliquei mas não deu para confirmar visualmente (sigo mesmo assim)${aba ? "" : " — aba não encontrada"}`);
     }
+    await esperarGridEstavel(2500);
+    const limpeza = await limparMarcacoesVelhas();
+    if (limpeza.restantes != null && limpeza.restantes > 0) {
+      // Ainda há seleção que não vemos (card fora da tela): confirmar levaria produto antigo
+      // junto. Não confirmo nada nesta janela — melhor ficar sem adicionar do que adicionar errado.
+      reg(`ATENÇÃO: a janela ainda mostra ${limpeza.restantes} produto(s) selecionado(s) que não são desta rodada e não estão à vista — não confirmo nada; desmarque-os na janela "Adicionar Produtos"`);
+      selecaoVelhaRestante = limpeza.restantes;
+    }
     return true;
+  }
+  let selecaoVelhaRestante = 0;
+
+  /** Marcações que NÃO são nossas e NÃO estão na sacola: a Shopee guarda a seleção da janela
+   *  entre aberturas (rodada fechada sem confirmar, produto que a dona tirou da sacola e ficou
+   *  marcado). O "Confirmar" adiciona TUDO o que está marcado — era assim que um ID novo fazia
+   *  subir vários produtos antigos. Desmarca o que está marcado, habilitado e fora da "Lista de
+   *  produtos"; o que está na lista fica (a Shopee mostra esses como marcados e desabilitados).
+   *  Devolve quantos ainda constam marcados no contador da janela depois disso. */
+  async function limparMarcacoesVelhas() {
+    const naSacola = titulosNaSacola();
+    const estaNaSacola = (titulo) => naSacola.some((t) => {
+      const r = pontuaTitulo(t.titulo, titulo);
+      return !!r && (r.exato || r.p >= PREFIXO_JA_NA_SACOLA);
+    });
+    let desmarcados = 0;
+    for (const c of cardsFavoritos()) {
+      if (estadoDoCard(c) !== true || cardDesabilitado(c)) continue;
+      if (estaNaSacola(c.titulo)) continue;
+      const alvos = alvosDeMarcacao(c);
+      for (const alvo of alvos) {
+        realClick(alvo.el, alvo.x, alvo.y);
+        if (await esperar(() => estadoDoCard(cardVivo(c) || c) !== true, 1200, 100)) break;
+      }
+      const vivo = cardVivo(c) || c;
+      if (estadoDoCard(vivo) === true) reg(`marcação antiga que NÃO consegui desmarcar: "${c.titulo.slice(0, 40)}"`);
+      else {
+        desmarcados++;
+        reg(`desmarquei marcação antiga (não está na sacola): "${c.titulo.slice(0, 40)}"`);
+      }
+    }
+    const raiz = containerModalFavoritos();
+    const contador = contadorDeSelecionados(botaoConfirmar(raiz), raiz);
+    return { desmarcados, restantes: contador };
   }
 
   /** Fecha as janelas SEM sair clicando em qualquer "Cancelar" da página (poderia cancelar
@@ -1434,6 +1476,7 @@
     log.length = 0;
     avisouSemCheckbox = false;
     limiteVistoNestaRodada = false;
+    selecaoVelhaRestante = 0;
     let estruturaNoLog = false; // a estrutura de UM card por rodada basta para diagnosticar
     const limite = opc.limite || 50;
     const simular = opc.modo === "simular";
@@ -1686,6 +1729,10 @@
       await fecharModais();
       return { ok: false, motivo: "semConfirmar", examinou: true, ...parcialBase() };
     }
+    if (selecaoVelhaRestante > 0) {
+      await fecharModais();
+      return { ok: false, motivo: "selecaoVelha", examinou: true, ...parcialBase() };
+    }
     // Registra ANTES de clicar: se o service worker hibernar ou der exceção depois daqui,
     // ainda saberemos que a confirmação foi disparada (evita reabrir tudo e duplicar).
     try {
@@ -1930,6 +1977,19 @@
       realClick(add);
       if (!(await esperar(() => !!abaImportar(), 10000))) {
         reg("importar: a janela 'Adicionar Produtos' não abriu");
+        return false;
+      }
+    }
+    // Seleção pendente na janela (de Meus Favoritos) entraria junto no Confirmar da importação.
+    const raizAntes = containerModalFavoritos();
+    const pendentesNaJanela = contadorDeSelecionados(botaoConfirmar(raizAntes), raizAntes);
+    if (pendentesNaJanela > 0 && abaFavoritos()) {
+      realClick(abaFavoritos());
+      await esperarGridEstavel(2500);
+      const limpeza = await limparMarcacoesVelhas();
+      if (limpeza.restantes > 0) {
+        reg(`importar: ${limpeza.restantes} produto(s) antigos continuam selecionados fora da vista — não importo, para não levá-los junto`);
+        await fecharModais();
         return false;
       }
     }

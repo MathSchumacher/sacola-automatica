@@ -833,7 +833,7 @@ function loteAposSacola(atual, snapshot, r) {
 }
 
 /** Motivos em que insistir sozinha só geraria janelas abrindo à toa na live. */
-const NAO_INSISTIR = new Set(["naoEncontrados", "ambiguos", "gridVazio", "semContagem", "tela", "semAba", "erro", "semConfirmacao", "parcial"]);
+const NAO_INSISTIR = new Set(["naoEncontrados", "ambiguos", "gridVazio", "semContagem", "tela", "semAba", "erro", "semConfirmacao", "parcial", "selecaoVelha"]);
 
 /** Depois de favoritar, tenta a sacola sozinha (se ligado).
  *  Sacola cheia não é erro: espera a dona liberar espaço e tenta de novo — via alarme,
