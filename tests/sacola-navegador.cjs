@@ -82,7 +82,7 @@ const CENARIOS = {
   asyncLento: { v: "asyncLento", nota: "servidor de 3 s: espera enquanto o card mostra que está carregando" },
   tardio: { v: "tardio" },
   cabecalho: { v: "antd", extras: ["cabecalho"], nota: "checkbox 'Todos' fora dos cards: o 1º produto virava um card fantasma com o checkbox errado" },
-  recemFavoritado: { v: "recemFavoritado", nota: "o último favoritado só entra na grade 2,5 s depois: era 'marca todos menos o mais recente'" },
+  recemFavoritado: { v: "recemFavoritado", nota: "o último favoritado entra na grade 0,7 s depois: uma releitura (até 1 s) ainda o pega; mais que isso vai pelo link" },
   instavel: { v: "instavel" },
   hover: { v: "hover" },
   link: { v: "link", nota: "o clique nunca pode abrir o link do produto na aba da live" },

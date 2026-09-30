@@ -1287,6 +1287,16 @@
 
   /** Fecha as janelas SEM sair clicando em qualquer "Cancelar" da página (poderia cancelar
    *  a transmissão ou um pedido). Só age dentro da modal e prefere Esc / botão de fechar. */
+  /** Depois de um Confirmar: espera a contagem "Produtos(N)" mudar (ou a janela fechar) em
+   *  vez de um tempo fixo — rápido quando a Shopee responde rápido. */
+  async function esperarContagemMudar(antes, ms) {
+    const t0 = Date.now();
+    await esperar(() => !modalFavoritosAberto(), ms);
+    // a contagem costuma subir logo depois de a janela fechar
+    await esperar(() => antes == null || contarSacola() !== antes, Math.max(400, ms - (Date.now() - t0)), 120);
+    await sleep(150);
+  }
+
   async function fecharModais() {
     for (let i = 0; i < 3; i++) {
       const raiz = containerModalFavoritos();
@@ -1295,7 +1305,7 @@
         (raiz ? acharDentro(raiz, ["cancelar"]) : null);
       if (alvo && visivel(alvo)) {
         realClick(alvo);
-        await sleep(700);
+        await sleep(400);
         continue;
       }
       try {
@@ -1303,7 +1313,7 @@
       } catch {
         /* ignore */
       }
-      await sleep(500);
+      await sleep(300);
       break;
     }
   }
@@ -1474,13 +1484,13 @@
     // NUNCA rolamos. Os recém-favoritados ficam no TOPO de "Meus Favoritos"; olhamos só uma
     // janela do topo (os N adicionados + margem, porque a dona pode estar favoritando na mão
     // ao mesmo tempo). O que não estiver ali não está mesmo — vai para "Importar via URL".
-    const janela = Math.min(Math.max(pendentes.size + 3, 4), 8);
+    const janela = Math.min(Math.max(pendentes.size + 4, 6), 10);
     const pronto = await esperarGridEstavel();
     reg(`grid de favoritos: ${pronto.cards} card(s) em ${pronto.ms}ms${pronto.estourou ? " (não estabilizou)" : ""}`);
     // O produto favoritado por ÚLTIMO pode ainda não estar na grade: a Shopee mostra a lista
     // que já tinha e insere o novo no topo alguns instantes depois. Uma leitura só o perdia —
     // era "marca todos menos o mais recente", e ele ia parar no Importar via URL. Agora, o que
-    // não foi achado é procurado de novo, por até 3 s, sempre que a grade mudar.
+    // não foi achado é procurado UMA vez mais (até 1 s), se a grade mudar — e daí vai direto pelo link.
     const t0Topo = Date.now();
     let assinaturaGrade = "";
     let passada = 0;
@@ -1489,8 +1499,8 @@
       const todosCards = cardsFavoritos();
       const assinaturaAgora = todosCards.map((c) => c.titulo).join("|");
       if (passada && assinaturaAgora === assinaturaGrade) {
-        if (Date.now() - t0Topo > 3000) break;
-        await sleep(500);
+        if (Date.now() - t0Topo > 1000) break;
+        await sleep(400);
         continue;
       }
       assinaturaGrade = assinaturaAgora;
@@ -1589,8 +1599,8 @@
         }
       }
       procurar = naoAchados;
-      if (!procurar.length || Date.now() - t0Topo > 3000) break;
-      await sleep(500);
+      if (!procurar.length || Date.now() - t0Topo > 1000) break;
+      await sleep(400);
     }
     if (procurar.length) reg(`não apareceram no topo em ${((Date.now() - t0Topo) / 1000).toFixed(1)}s: ${procurar.map((i) => i.codigo).join(", ")}`);
     if (pendentes.size) reg(`não marcados em Meus Favoritos (vão por Importar via URL se tiverem link): ${[...pendentes.keys()].join(", ")}`);
@@ -1680,13 +1690,15 @@
       /* ignore */
     }
     realClick(confirmar);
-    await sleep(2500);
-    await esperar(() => !modalFavoritosAberto(), 6000);
+    await esperarContagemMudar(antes, 4000);
 
     const depois = contarSacola();
     reg(`sacola depois: ${depois == null ? "?" : depois}`);
     const cresceu = antes != null && depois != null ? depois - antes : null;
-    await fecharModais();
+    // Só fecha tudo se não houver mais nada a importar: o Importar via URL usa a mesma
+    // "Lista de produtos", e reabri-la (mouse em "Produtos", esperar a janela) custava segundos.
+    if (!importaveis().length) await fecharModais();
+    else if (modalFavoritosAberto()) await fecharModais();
     // Marcações incertas: o que a contagem subiu ALÉM dos marcados com sinal é deles.
     const extras = cresceu != null ? cresceu - novos.length : 0;
     if (incertos.length) {
@@ -1898,7 +1910,7 @@
     }
     const aba = abaImportar();
     realClick(aba);
-    await sleep(350);
+    await esperar(() => !!campoUrl(), 1500, 80);
     return true;
   }
 
@@ -1923,7 +1935,7 @@
     }
     campo.focus();
     setNativeValue(campo, item.url);
-    await sleep(250);
+    await sleep(120);
     const conv = acharPorTexto(["converter"], "button,div,span,a", true);
     if (!conv) {
       reg(`importar ${item.codigo}: não achei o botão 'Converter'`);
@@ -1965,10 +1977,11 @@
       return { ok: false, motivo: "semConfirmar" };
     }
     realClick(conf);
-    await sleep(2500);
-    await esperar(() => !abaImportar(), 6000);
+    await esperarContagemMudar(atualAntes, 4000);
     const depois = contarSacola();
-    await fecharModais();
+    // A janela "Adicionar Produtos" fecha sozinha ao confirmar. A "Lista de produtos" fica
+    // aberta para o próximo item: fechar e reabrir tudo custava vários segundos por produto.
+    if (modalFavoritosAberto()) await fecharModais();
     const entrou = depois != null && atualAntes != null && depois >= atualAntes + 1;
     reg(`importar ${item.codigo}: sacola ${atualAntes} → ${depois == null ? "?" : depois} ${entrou ? "(entrou)" : "(não cresceu — provavelmente já estava lá)"}`);
     return { ok: entrou, depois, motivo: entrou ? undefined : "naoCresceu" };
@@ -2008,8 +2021,9 @@
         if (r.motivo === "naoCresceu") naoCresceram.push(item.codigo);
         motivo = motivo || r.motivo;
       }
-      await sleep(250);
+      await sleep(150);
     }
+    await fecharModais();
     return { adicionados, jaEstavam, naoCresceram, tentados, atual, cresceu: atualInicial != null && atual != null ? atual - atualInicial : null, motivo };
   }
 

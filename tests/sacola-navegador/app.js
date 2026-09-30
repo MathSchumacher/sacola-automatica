@@ -16,7 +16,7 @@
 //   async       a seleção passa pelo servidor (900 ms) e ALTERNA: um 2º clique antes da resposta desmarca
 //   asyncLento  o mesmo, com servidor lento (3 s, mais que a espera normal) e spinner no card enquanto processa
 //   tardio      a grade é recarregada (nós novos, mesma contagem) logo depois de aberta
-//   recemFavoritado  o produto favoritado por ÚLTIMO ainda não está na grade: entra no topo 2,5 s depois
+//   recemFavoritado  o produto favoritado por ÚLTIMO ainda não está na grade: entra no topo 0,7 s depois
 //   instavel    a grade ganha nós novos a cada 500 ms
 //   hover       o card muda de aparência com o mouse em cima (não pode parecer seleção)
 //   link        a imagem é um link para o produto e o marcador fica por cima dela, sem eventos
@@ -226,7 +226,7 @@
       const t = setTimeout(() => {
         evento("produto recém-favoritado entrou no topo da grade");
         setLista(FAVORITOS);
-      }, 2500);
+      }, 700);
       return () => clearTimeout(t);
     }, []);
     useEffect(() => {
