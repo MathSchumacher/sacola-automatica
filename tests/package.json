@@ -1,13 +1,15 @@
 {
   "name": "sacolinha-testes",
   "private": true,
-  "description": "Dependências só dos testes da extensão (tests/sacola-navegador.cjs). O app e a extensão não usam nada disto.",
+  "description": "Dependências só dos testes da extensão (tests/sacola-navegador.cjs e tests/fila-navegador.cjs). O app e a extensão não usam nada disto.",
   "scripts": {
-    "sacola": "node sacola-navegador.cjs"
+    "sacola": "node sacola-navegador.cjs",
+    "fila": "node fila-navegador.cjs"
   },
   "devDependencies": {
     "playwright": "1.56.1",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "selfsigned": "^2.4.1"
   }
 }

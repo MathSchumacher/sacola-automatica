@@ -116,6 +116,17 @@ Edge: `edge://extensions` · Chrome: `chrome://extensions` — mesmo caminho.
 
 Esteja logada na Shopee (`shopee.com.br`) nesse navegador.
 
+## Item preso em "favoritando…"
+
+Um item podia ficar minutos em "favoritando…" com a fila parada. Medido num Chromium com a extensão carregada e um `shopee.com.br` de mentira (`tests/fila-navegador.cjs`):
+
+- a aba do produto perguntava ao service worker "tenho trabalho?" por só 2 s; se o worker estava acordando, ninguém trabalhava e o prazo de **120 s** estourava — e o item ainda ganhava uma segunda tentativa de 120 s. Agora pergunta por 12 s, o prazo é de **50 s**, e a nova tentativa vai para o **fim** da fila;
+- um erro dentro da página não devolvia resultado nenhum (mesmo prazo). Agora erro é resposta: o item falha na hora;
+- aba fechada pela dona é percebida na hora;
+- esperas internas menores: 8 s pela barra de busca (era 18), 6 s por um produto que não abre (era 10), 10 s pelo botão de favoritar (era 18).
+
+**Código que não vira produto sai da fila na primeira falha**, sem nova tentativa: busca que mostra lista de resultados (2 s), home sem barra de busca, código que não cola, erro na página. Se for código de verdade, o chat pede de novo. Antes, "barra não encontrada" custava 37 s com retry; agora 8 s.
+
 ## Volume alto (live cheia)
 
 O limite padrão passou a ser **600 favoritos por hora** (era 120, que virava gargalo com muita gente mandando código). Ao bater no teto a fila **avisa**: notificação, log e um alerta em amarelo no popup, em vez de parar em silêncio. A ordem é sempre **do código mais antigo para o mais recente**, mesmo com várias janelas favoritando em paralelo. Se uma aba ficar congelada em segundo plano, a extensão dá foco nela sozinha depois de 25 s para destravar.

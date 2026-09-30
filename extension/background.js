@@ -154,6 +154,7 @@ function likeInTab(url, settings, item) {
       if (done) return;
       done = true;
       chrome.runtime.onMessage.removeListener(onMsg);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
       if (windowId != null) chrome.windows.remove(windowId).catch(() => {});
       else if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
       // devolve o foco para onde a usuária estava (a aba da live)
@@ -165,6 +166,11 @@ function likeInTab(url, settings, item) {
       if (sender.tab && sender.tab.id === tabId && msg && msg.type === "like-result") finish(msg.result);
     };
     chrome.runtime.onMessage.addListener(onMsg);
+    // Aba fechada (pela dona, ou pelo navegador): não há mais quem responda — falha na hora.
+    const onRemoved = (id) => {
+      if (id === tabId) finish({ ok: false, code: "tab", message: "a aba foi fechada antes de terminar" });
+    };
+    chrome.tabs.onRemoved.addListener(onRemoved);
     try {
       if (sacolaRodando || ativos > 1) {
         // Em paralelo (ou com a sacola em andamento): cada favorito abre em JANELA separada.
@@ -196,9 +202,9 @@ function likeInTab(url, settings, item) {
       finish({ ok: false, code: "tab", message: String(e) });
     }
     // Aba em segundo plano pode ficar congelada pelo navegador e a página não termina de
-    // carregar. Se em 25 s nada voltou, ativamos a aba (é o que a dona fazia na mão) e
+    // carregar. Se em 20 s nada voltou, ativamos a aba (é o que a dona fazia na mão) e
     // seguimos esperando. Duas cutucadas antes de desistir.
-    for (const espera of [25000, 60000]) {
+    for (const espera of [20000, 35000]) {
       setTimeout(async () => {
         if (done || tabId == null) return;
         try {
@@ -210,8 +216,9 @@ function likeInTab(url, settings, item) {
         }
       }, espera);
     }
-    // Códigos passam por duas páginas (busca → produto), então o prazo é maior.
-    setTimeout(() => finish({ ok: false, code: "timeout", message: "página não respondeu em 120s" }), 120000);
+    // Um código válido resolve em poucos segundos (busca → produto → coração). 50 s é folga
+    // de sobra; 120 s era uma eternidade com a fila parada e o item "favoritando…".
+    setTimeout(() => finish({ ok: false, code: "timeout", message: "página não respondeu em 50s" }), 50000);
   });
 }
 
@@ -219,7 +226,7 @@ function likeInTab(url, settings, item) {
  *  Sem isto, `rodarSacola` vê "fila ocupada" para sempre e a sacola nunca mais roda. */
 async function destravarItens() {
   const { queue } = await getState();
-  const limite = Date.now() - 3 * 60_000;
+  const limite = Date.now() - 90_000; // acima do prazo de 50 s + cutucadas: é sobra, não trabalho
   let mudou = false;
   for (const q of queue) {
     if (q.status === "working" && (q.startedAt || q.addedAt || 0) < limite) {
@@ -354,9 +361,11 @@ async function trabalhar(item, settings) {
           body: JSON.stringify({ itemIds: [Number(cur.itemId)], source: "chat" }),
         });
       }
-    } else if (!["login", "captcha", "unresolved", "noresult"].includes(result.code) && (cur.tentativas || 0) < 1) {
+    } else if (!["login", "captcha", "unresolved", "noresult", "nosearchbox", "digitacao", "erro"].includes(result.code) && (cur.tentativas || 0) < 1) {
       // "noresult" NÃO ganha nova tentativa: a Shopee já respondeu que o código não é produto.
-      // Repetir a busca era a "insistência no produto que não existe".
+      // Repetir a busca era a "insistência no produto que não existe". O mesmo vale para o que
+      // não é problema passageiro da página (barra de busca ausente, código que não cola, erro):
+      // insistir só segura a fila; se for código de verdade, o chat pede de novo.
       // Falha esporádica (página que não carregou, clique que não pegou): tenta mais uma vez
       // sozinha antes de marcar como falha — evita a dona ter que favoritar na mão.
       cur.tentativas = (cur.tentativas || 0) + 1;

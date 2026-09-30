@@ -486,7 +486,7 @@
       return null;
     };
     let input = null;
-    for (let i = 0; i < 150 && !input; i++) {
+    for (let i = 0; i < 65 && !input; i++) {
       if (i % 4 === 0) {
         const prob = pageProblem();
         if (prob) return { ok: false, ...prob, url: location.href };
@@ -633,7 +633,7 @@
       // redirecionamento SPA concluído: cai no fluxo normal de favoritar abaixo
     }
     // 3) Ainda não é produto? espera um pouco mais (SPA pode redirecionar com atraso)
-    for (let i = 0; i < 70 && !isProductUrl(location.href); i++) {
+    for (let i = 0; i < 40 && !isProductUrl(location.href); i++) {
       if (i % 4 === 0) {
         const prob = pageProblem();
         if (prob) return { ok: false, ...prob, url: location.href };
@@ -645,7 +645,7 @@
     }
     // Espera a SPA renderizar.
     let btn = null;
-    for (let i = 0; i < 150 && !btn; i++) {
+    for (let i = 0; i < 85 && !btn; i++) {
       if (i % 4 === 0) {
         const prob = pageProblem();
         if (prob) return { ok: false, ...prob, url: location.href };
@@ -753,14 +753,24 @@
     });
 
   (async () => {
-    for (let i = 0; i < 8; i++) {
+    // Pergunta por até ~12 s: o service worker registra o trabalho DEPOIS de abrir a aba e pode
+    // estar acordando. Desistir em 2 s deixava a aba aberta sem ninguém trabalhando — e o item
+    // ficava "favoritando…" até o prazo do worker estourar.
+    for (let i = 0; i < 40; i++) {
       const resp = await askJob();
       if (resp && resp.job) {
-        const result = await runJob(resp.calibratedSelector, resp.code);
-        if (result) chrome.runtime.sendMessage({ type: "like-result", result });
+        let result;
+        try {
+          result = await runJob(resp.calibratedSelector, resp.code);
+        } catch (e) {
+          // Sem isto, um erro aqui dentro não devolvia resultado nenhum e o worker esperava o
+          // prazo inteiro. Erro é resposta: o item falha na hora e a fila segue.
+          result = { ok: false, code: "erro", message: `erro na página: ${String((e && e.message) || e).slice(0, 120)}`, url: location.href };
+        }
+        if (result) chrome.runtime.sendMessage({ type: "like-result", result }, () => void chrome.runtime.lastError);
         return;
       }
-      await sleep(250);
+      await sleep(300);
     }
   })();
 })();
