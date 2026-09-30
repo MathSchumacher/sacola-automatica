@@ -2,7 +2,21 @@
 // Também oferece o modo de calibração: a usuária clica no coração uma vez e gravamos o seletor.
 (() => {
   const { idsFromUrl } = globalThis.SacolinhaParse;
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Página escondida (aba de fundo, janela coberta por outra): o Chrome desacelera setTimeout
+  // para 1 por segundo — cada espera de 120 ms virava 1 s e a busca estourava o prazo. É o que
+  // fazia "aba em segundo plano" não funcionar. Mensagens de MessageChannel NÃO são
+  // desaceleradas, então, escondida, a espera é feita com elas (custa CPU, mas só enquanto há
+  // trabalho nesta aba — segundos). Visível, setTimeout normal.
+  const canal = typeof MessageChannel !== "undefined" ? new MessageChannel() : null;
+  const ceder = () => new Promise((r) => { canal.port1.onmessage = () => r(); canal.port2.postMessage(0); });
+  const sleep = async (ms) => {
+    if (!document.hidden || !canal) return new Promise((r) => setTimeout(r, ms));
+    const fim = performance.now() + ms;
+    while (performance.now() < fim) await ceder();
+  };
+  // Esperas pela PRÓPRIA Shopee (redirecionar, renderizar): o JavaScript dela também é
+  // desacelerado quando a página está escondida, então esperamos mais por ela nesse caso.
+  const folga = () => (document.hidden ? 3 : 1);
 
   const LIKE_WORDS = /^(curtir|favoritar|adicionar aos favoritos|like|curtido|favoritado|liked)\b/i;
   const LIKED_WORDS = /^(curtido|favoritado|liked)\b/i;
@@ -528,7 +542,7 @@
     marca("enter em");
 
     // Dá tempo para o próprio JavaScript da Shopee resolver o código e navegar.
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < 14 * folga(); i++) {
       await sleep(150);
       if (saiuDaHome()) return concluir();
     }
@@ -539,7 +553,7 @@
     campo.focus();
     pressEnter(campo);
     marca("2º enter em");
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < 14 * folga(); i++) {
       await sleep(150);
       if (saiuDaHome()) return concluir();
     }
@@ -580,7 +594,7 @@
     // 17 páginas de produtos aleatórios). Ficar 30 s nela era o "insiste no produto que não
     // existe"; e o fallback antigo — clicar no PRIMEIRO resultado — favoritaria um produto
     // qualquer, que iria parar na sacola. Nunca mais: lista de resultados = código inválido.
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 40 * folga(); i++) {
       // Redirecionou via SPA para o produto no MESMO documento → segue para o coração aqui mesmo.
       if (isProductUrl(location.href)) return { done: true, result: null };
       const prob = pageProblem();
@@ -633,7 +647,7 @@
       // redirecionamento SPA concluído: cai no fluxo normal de favoritar abaixo
     }
     // 3) Ainda não é produto? espera um pouco mais (SPA pode redirecionar com atraso)
-    for (let i = 0; i < 40 && !isProductUrl(location.href); i++) {
+    for (let i = 0; i < 40 * folga() && !isProductUrl(location.href); i++) {
       if (i % 4 === 0) {
         const prob = pageProblem();
         if (prob) return { ok: false, ...prob, url: location.href };
@@ -645,7 +659,7 @@
     }
     // Espera a SPA renderizar.
     let btn = null;
-    for (let i = 0; i < 85 && !btn; i++) {
+    for (let i = 0; i < 85 * folga() && !btn; i++) {
       if (i % 4 === 0) {
         const prob = pageProblem();
         if (prob) return { ok: false, ...prob, url: location.href };

@@ -7,6 +7,8 @@
 // Rodar tudo:           node tests/fila-navegador.cjs
 // Um cenário:           node tests/fila-navegador.cjs lista
 // Versão antiga:        node tests/fila-navegador.cjs --ref=7761fd9
+// Modo de abertura:     node tests/fila-navegador.cjs produto --abrir=window   (activeTab | window | tab; padrão tab,
+//                       que deixa a página ESCONDIDA — é o caso em que o Chrome desacelera os temporizadores)
 //
 // Cenários (o que a "Shopee" faz com o código ABC-DEF-GHI):
 //   produto   a busca redireciona para o produto → favoritado, entra no lote da sacola
@@ -23,6 +25,7 @@ const { execFileSync } = require("child_process");
 const RAIZ = path.resolve(__dirname, "..");
 const args = process.argv.slice(2);
 const REF = (args.find((a) => a.startsWith("--ref=")) || "").slice(6) || process.env.REF || "";
+const ABRIR = (args.find((a) => a.startsWith("--abrir=")) || "").slice(8) || "tab";
 const pedidos = args.filter((a) => !a.startsWith("--"));
 
 function carregar(nome) {
@@ -112,7 +115,7 @@ function servidor(modo) {
       let [sw] = ctx.serviceWorkers();
       if (!sw) sw = await ctx.waitForEvent("serviceworker", { timeout: 15000 });
       const t0 = Date.now();
-      await sw.evaluate(async () => chrome.storage.local.set({ settings: { enabled: true, openMode: "tab", minDelayMs: 1500, maxDelayMs: 1500 } }));
+      await sw.evaluate(async (abrir) => chrome.storage.local.set({ settings: { enabled: true, openMode: abrir, minDelayMs: 1500, maxDelayMs: 1500 } }), ABRIR);
       await sw.evaluate(async () => enqueue(parseProductRefs("ABC-DEF-GHI", { linhaDeChat: false }), "manual"));
       let q = null;
       let bag = [];
@@ -132,7 +135,7 @@ function servidor(modo) {
       }
       if (!erro && seg > c.maxSeg) erro = `demorou ${seg.toFixed(0)} s (máximo ${c.maxSeg} s)`;
       if (erro) falhas++;
-      console.log(`${erro ? "FALHOU" : "ok    "} ${nome.padEnd(9)} ${seg.toFixed(0).padStart(4)}s  ${q ? `${q.status} · "${q.note}"${q.tentativas ? ` · ${q.tentativas} retry` : ""}` : ""}${erro ? `\n         — ${erro}` : ""}`);
+      console.log(`${erro ? "FALHOU" : "ok    "} ${nome.padEnd(9)} [${ABRIR}] ${seg.toFixed(0).padStart(4)}s  ${q ? `${q.status} · "${q.note}"${q.tentativas ? ` · ${q.tentativas} retry` : ""}` : ""}${erro ? `\n         — ${erro}` : ""}`);
     } finally {
       await ctx.close();
       fs.rmSync(perfil, { recursive: true, force: true });

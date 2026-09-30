@@ -22,9 +22,12 @@ const DEFAULTS = {
   // Sacola da live: juntar os favoritados e adicioná-los em lote.
   autoBag: false, // adicionar à sacola sozinha quando a fila de favoritos zerar
   bagLimit: 50, // limite de produtos na sacola
-  // "activeTab" = aba normal em primeiro plano (confiável: a Shopee só redireciona/renderiza
-  //               quando a página está visível). Ao terminar, o foco volta para a aba anterior.
-  // "window"    = janelinha visível sem foco   | "tab" = aba oculta (ambas sujeitas a congelamento)
+  // "activeTab" = aba normal em primeiro plano. Ao terminar, o foco volta para a aba anterior.
+  //               Rouba o foco a cada código: atrapalha quem está trabalhando em outra coisa.
+  // "window"    = janela separada, visível, SEM foco: não interrompe a dona. As esperas do
+  //               content script não são desaceleradas mesmo com a janela coberta (ver sleep
+  //               em content-product.js), e ninguém dá foco à janela para "destravar".
+  // "tab"       = aba de fundo na mesma janela (discreto, mas o Brave pode congelar a página)
   openMode: "activeTab",
 };
 
@@ -172,11 +175,12 @@ function likeInTab(url, settings, item) {
     };
     chrome.tabs.onRemoved.addListener(onRemoved);
     try {
+      const semFoco = settings.openMode !== "activeTab"; // a dona pediu para não ser interrompida
       if (sacolaRodando || ativos > 1) {
         // Em paralelo (ou com a sacola em andamento): cada favorito abre em JANELA separada.
         // Abas na mesma janela deixariam a aba da live oculta, o navegador congelaria a página
         // e o chat/sacola quebrariam no meio. Assim a live segue sendo a aba ativa da janela dela.
-        const win = await chrome.windows.create({ url, focused: true, width: 1100, height: 800, left: 60, top: 60 });
+        const win = await chrome.windows.create({ url, focused: !semFoco, type: semFoco ? "popup" : "normal", width: 1100, height: 800, left: 60, top: 60 });
         windowId = win.id;
         tabId = win.tabs && win.tabs[0] ? win.tabs[0].id : null;
       } else if (settings.openMode === "activeTab") {
@@ -207,6 +211,7 @@ function likeInTab(url, settings, item) {
     for (const espera of [20000, 35000]) {
       setTimeout(async () => {
         if (done || tabId == null) return;
+        if (settings.openMode !== "activeTab") return; // sem foco é sem foco: não "destrava" roubando a tela
         try {
           await chrome.tabs.update(tabId, { active: true });
           if (windowId != null) await chrome.windows.update(windowId, { focused: true, state: "normal" });
@@ -824,10 +829,13 @@ chrome.runtime.onInstalled.addListener(async () => {
   const lento = (settings.minDelayMs || 0) >= 6000 && (settings.maxDelayMs || 0) >= 12000;
   // 120/h era o padrão antigo e virou gargalo em live cheia; sobe para o novo padrão.
   const tetoAntigo = !settings.maxPerHour || settings.maxPerHour <= 120;
+  // O modo de abertura é escolha da dona (sem foco, para trabalhar em outra coisa): só volta ao
+  // padrão se o valor gravado não existir mais.
+  const modoValido = ["activeTab", "window", "tab"].includes(settings.openMode);
   await setState({
     settings: {
       ...settings,
-      openMode: DEFAULTS.openMode,
+      openMode: modoValido ? settings.openMode : DEFAULTS.openMode,
       ...(lento ? { minDelayMs: DEFAULTS.minDelayMs, maxDelayMs: DEFAULTS.maxDelayMs } : {}),
       ...(tetoAntigo ? { maxPerHour: DEFAULTS.maxPerHour } : {}),
     },

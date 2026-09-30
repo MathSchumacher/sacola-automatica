@@ -99,12 +99,12 @@
         <div class="row"><label><input type="checkbox" id="autoFromChat" /> Pegar automaticamente do chat da live</label></div>
         <div class="row">Abrir produto em:
           <select id="openMode" style="background:#161a21;color:#e8eaf0;border:1px solid #2a303b;border-radius:6px;padding:3px 6px">
-            <option value="activeTab">aba em primeiro plano (confiável)</option>
-            <option value="window">janelinha visível sem foco</option>
-            <option value="tab">aba em segundo plano (discreto)</option>
+            <option value="activeTab">aba em primeiro plano (rouba o foco a cada código)</option>
+            <option value="window">janela separada, sem roubar o foco (para trabalhar em outra coisa)</option>
+            <option value="tab">aba em segundo plano (discreto; o Brave pode congelar)</option>
           </select>
         </div>
-        <div class="muted" style="margin-top:2px">O Brave congela páginas que não estão visíveis, e aí a Shopee não redireciona para o produto. Por isso o padrão abre a aba em primeiro plano e devolve o foco para a live ao terminar.</div>
+        <div class="muted" style="margin-top:2px">"Janela separada" abre a Shopee numa janela própria que não toma o foco: você continua no que estava. Deixe essa janela em algum canto da tela — pode ficar atrás de outras, mas não a minimize.</div>
         <div class="row"><label><input type="checkbox" id="sendToApp" /> Integrar com o app desktop</label></div>
         <div class="row">Intervalo entre favoritos: <input type="number" id="minDelay" min="2" /> a <input type="number" id="maxDelay" min="2" /> s · máx./hora <input type="number" id="maxPerHour" min="1" /></div>
         <div class="row">Favoritar em paralelo (máx. janelas): <input type="number" id="maxParalelo" min="1" max="6" /></div>
