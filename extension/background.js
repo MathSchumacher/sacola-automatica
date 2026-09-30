@@ -508,6 +508,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const { settings } = await getState();
       const next = { ...settings, ...msg.settings };
       await setState({ settings: next });
+      if (msg.settings && msg.settings.bagLimit && msg.settings.bagLimit !== settings.bagLimit) await chrome.storage.local.remove("bagLimiteAprendido");
       if (next.enabled) void processQueue();
       sendResponse({ settings: next });
     } else if (msg.type === "live-status") {
@@ -626,6 +627,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       st.throttled = (await chrome.storage.local.get("throttled")).throttled || null;
       st.ultimoVigia = (await chrome.storage.local.get("ultimoVigia")).ultimoVigia || null;
       st.bagDesde = bagDesde;
+      st.bagLimiteAprendido = (await chrome.storage.local.get("bagLimiteAprendido")).bagLimiteAprendido || null;
       st.liveStatus = liveStatus || null;
       st.bag = bag;
       st.bagLast = bagLast;
@@ -717,10 +719,16 @@ async function rodarSacola(modo) {
     // frameId 0 = janela principal. Sem isto, um iframe responderia primeiro (e com erro),
     // enquanto o frame principal seguiria clicando em Confirmar.
     // Prazo máximo: se a página travar, a sacola NÃO pode segurar a fila de favoritos.
+    // O limite REAL da Shopee pode ser menor que o configurado (30 numa conta que ainda não subiu
+    // de nível, com o padrão em 50): usa o menor dos dois. O aprendido vem de uma recusa da
+    // própria Shopee e é descartado assim que a contagem passar dele (a conta subiu de nível).
+    const { bagLimiteAprendido = null } = await chrome.storage.local.get("bagLimiteAprendido");
+    const limiteConfigurado = settings.bagLimit || DEFAULTS.bagLimit;
+    const limite = bagLimiteAprendido && bagLimiteAprendido < limiteConfigurado ? bagLimiteAprendido : limiteConfigurado;
     r = await Promise.race([
       chrome.tabs.sendMessage(
         liveStatus.tabId,
-        { type: "bag-run", lote: bag, modo, limite: settings.bagLimit || DEFAULTS.bagLimit },
+        { type: "bag-run", lote: bag, modo, limite },
         { frameId: 0 },
       ),
       new Promise((res) => setTimeout(() => res({ ok: false, motivo: "demorou", log: ["a página da live não respondeu em 3 min"] }), 180000)),
@@ -744,6 +752,13 @@ async function rodarSacola(modo) {
   }
 
   const resultado = { ...r, modo, at: Date.now() };
+  if (r.motivo === "cheia" && Number.isFinite(r.limiteReal) && r.limiteReal > 0 && r.limiteReal < limiteConfigurado) {
+    if (r.limiteReal !== bagLimiteAprendido) log(`a Shopee recusou com ${r.limiteReal} produtos: passo a considerar esse o limite da sacola (o configurado é ${limiteConfigurado})`);
+    await setState({ bagLimiteAprendido: r.limiteReal });
+  } else if (bagLimiteAprendido && Number.isFinite(r.atual) && r.atual > bagLimiteAprendido) {
+    log(`a sacola passou de ${bagLimiteAprendido} produtos: o limite aprendido não vale mais (a conta subiu de nível?)`);
+    await chrome.storage.local.remove("bagLimiteAprendido");
+  }
   if (modo === "real") {
     // Relê o lote: produtos favoritados DURANTE a execução não podem ser apagados por um
     // snapshot velho. "nadaNovo" também sai do lote — o objetivo (estar na sacola) foi cumprido.
@@ -802,7 +817,14 @@ async function talvezRodarSacolaAutomatica() {
   if (!bag.length) return;
   const r = await rodarSacola("real");
   if (!r || r.ok) return;
-  if (r.motivo === "cheia" || r.motivo === "filaOcupada") {
+  if (r.motivo === "cheia") {
+    // Sacola no limite: não adianta insistir sozinha (cada tentativa reabre a lista na live).
+    // O lote fica guardado; o próximo produto favoritado dispara uma nova tentativa, e a dona
+    // pode usar o botão do popup depois de liberar espaço. Favoritar continua normalmente.
+    log("sacola cheia — o lote fica guardado; tento de novo quando favoritar o próximo produto (ou pelo popup)");
+    return;
+  }
+  if (r.motivo === "filaOcupada") {
     const { bagTentativas = 0 } = await chrome.storage.local.get("bagTentativas");
     if (bagTentativas >= 30) return log("sacola: desisto de tentar sozinha (avise a dona)");
     await setState({ bagTentativas: bagTentativas + 1 });

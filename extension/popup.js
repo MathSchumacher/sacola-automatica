@@ -242,6 +242,8 @@ async function render() {
   $("#maxDelay").value = Math.round(settings.maxDelayMs / 1000);
   $("#maxPerHour").value = settings.maxPerHour;
   $("#maxParalelo").value = settings.maxParalelo ?? 4;
+  if (document.activeElement !== $("#bagLimit")) $("#bagLimit").value = settings.bagLimit ?? 50;
+  $("#bagLimitInfo").textContent = st.bagLimiteAprendido && st.bagLimiteAprendido < (settings.bagLimit ?? 50) ? `(a Shopee recusou com ${st.bagLimiteAprendido}: uso ${st.bagLimiteAprendido} até a sacola passar disso)` : "";
   $("#cal").textContent = settings.calibratedSelector ? `seletor: ${settings.calibratedSelector}` : "usando detecção automática";
 }
 
@@ -284,6 +286,7 @@ $("#save").addEventListener("click", async () => {
       maxDelayMs: Math.max(2, Number($("#maxDelay").value) || 12) * 1000,
       maxPerHour: Math.max(1, Number($("#maxPerHour").value) || 120),
       maxParalelo: Math.min(6, Math.max(1, Number($("#maxParalelo").value) || 4)),
+      bagLimit: Math.min(500, Math.max(1, Number($("#bagLimit").value) || 50)),
     },
   });
   render();

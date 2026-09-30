@@ -1433,6 +1433,7 @@
   async function adicionarNaSacola(lote, opc) {
     log.length = 0;
     avisouSemCheckbox = false;
+    limiteVistoNestaRodada = false;
     let estruturaNoLog = false; // a estrutura de UM card por rodada basta para diagnosticar
     const limite = opc.limite || 50;
     const simular = opc.modo === "simular";
@@ -1630,12 +1631,15 @@
         ok: entraram.length > 0,
         motivo: entraram.length
           ? undefined
+          : rImp.motivo === "cheia"
+            ? "cheia"
           : ambiguos.size
             ? "ambiguos"
             : resolvidos && !pendentes.size
               ? "nadaNovo"
               : rImp.motivo || "naoEncontrados",
         examinou: true,
+        limiteReal: rImp.motivo === "cheia" ? atualAgora : undefined,
         atual: atualAgora,
         cresceu: antes != null && atualAgora != null ? atualAgora - antes : null,
         adicionados: entraram,
@@ -1717,6 +1721,15 @@
     const confirmado = cresceu != null && cresceu >= novos.length;
     const parcial = cresceu != null && cresceu > 0 && cresceu < novos.length;
     if (!confirmado) reg(`entrada não confirmada (antes=${antes}, depois=${depois == null ? "?" : depois}, marcados=${novos.length})`);
+    // A Shopee recusou por LIMITE (o dela pode ser menor que o configurado, ou a contagem lida
+    // pode estar defasada): parar aqui. Tentar o Importar via URL em sacola cheia não adiciona
+    // nada — e pior, "não cresceu" seria lido como "já estava" e o produto sairia do lote.
+    if (!confirmado && (limiteVistoNestaRodada || avisoDeLimite())) {
+      reg(`a Shopee avisou que a sacola está no limite (${depois == null ? "?" : depois} produtos): paro aqui, sem Importar via URL; tento de novo quando houver vaga`);
+      await fecharModais();
+      for (const n of novos) pendentes.set(n.codigo, n); // não entraram: continuam no lote
+      return { ok: false, motivo: "cheia", limiteReal: depois, examinou: true, atual: depois, cresceu, adicionados: [], jaEstavam: jaEstavam(), ambiguos: [...ambiguos], pendentes: [...pendentes.keys()], log };
+    }
 
     // Sobrou item com link que não apareceu em "Meus Favoritos"? "Importar via URL" resolve.
     let importados = [];
@@ -1743,6 +1756,7 @@
     return {
       ok: confirmado,
       parcial,
+      limiteReal: limiteVistoNestaRodada ? atualFinal : undefined,
       motivo: confirmado ? undefined : parcial ? "parcial" : "semConfirmacao",
       examinou: true,
       atual: atualFinal,
@@ -1889,6 +1903,17 @@
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  /** A Shopee avisou que a sacola está no limite? (texto normalizado, sem acento) Vale para o
+   *  aviso que aparece ao confirmar E para o que fica na janela quando ela já abre cheia. */
+  const RE_LIMITE = /(limite|maximo) (maximo )?de produtos|maximo de \d+ produtos|atingiu o (limite|maximo)|(sacola|lista) (esta |ja esta )?cheia|nao (e possivel|da para|pode) adicionar mais|excede(u)? o (limite|maximo)/;
+  function avisoDeLimite() {
+    try {
+      return RE_LIMITE.test(norm((document.body.textContent || "").slice(0, 60000)));
+    } catch {
+      return false;
+    }
+  }
+  let limiteVistoNestaRodada = false;
   const abaImportar = () => acharPorTexto(["importar via url", "importar via"], "div,span,li,button,a");
   /** Aviso da Shopee de que o produto do link já está na lista (texto normalizado, sem acento). */
   const RE_JA_NA_LISTA = /\bja (foi |esta |se encontra )?(adicionad|na (lista|sacola)|inclu|cadastrad)/;
@@ -1949,7 +1974,15 @@
     // Espera o produto aparecer (Confirmar habilita) e confere que é o nosso, se der.
     // Se a tela avisar que o produto JÁ está na lista, o objetivo está cumprido: sai do lote.
     const avisoJa = () => !avisoJaAntes && RE_JA_NA_LISTA.test(textoModal());
-    await esperar(() => confirmarHabilitado() || avisoJa(), 10000);
+    const limiteAntes = avisoDeLimite();
+    const avisoLimite = () => !limiteAntes && avisoDeLimite();
+    await esperar(() => confirmarHabilitado() || avisoJa() || avisoLimite(), 10000);
+    if (avisoLimite()) {
+      reg(`importar ${item.codigo}: a Shopee avisou que a sacola está no limite — paro`);
+      limiteVistoNestaRodada = true;
+      await fecharModais();
+      return { ok: false, motivo: "cheia" };
+    }
     if (avisoJa()) {
       reg(`importar ${item.codigo}: a tela avisou que o produto já está na lista — não insisto`);
       await fecharModais();
@@ -1979,6 +2012,12 @@
     realClick(conf);
     await esperarContagemMudar(atualAntes, 4000);
     const depois = contarSacola();
+    if (avisoLimite() || (depois != null && atualAntes != null && depois <= atualAntes && avisoDeLimite())) {
+      reg(`importar ${item.codigo}: confirmei e a Shopee avisou que a sacola está no limite — paro`);
+      limiteVistoNestaRodada = true;
+      await fecharModais();
+      return { ok: false, motivo: "cheia" };
+    }
     // A janela "Adicionar Produtos" fecha sozinha ao confirmar. A "Lista de produtos" fica
     // aberta para o próximo item: fechar e reabrir tudo custava vários segundos por produto.
     if (modalFavoritosAberto()) await fecharModais();
@@ -2016,6 +2055,10 @@
         adicionados.push(item.codigo);
         pendentes.delete(item.codigo);
         atual = r.depois;
+      } else if (r.motivo === "cheia") {
+        // sacola no limite: os outros também não entrariam — e ficam todos no lote
+        motivo = "cheia";
+        break;
       } else {
         tentados.push(item.codigo);
         if (r.motivo === "naoCresceu") naoCresceram.push(item.codigo);

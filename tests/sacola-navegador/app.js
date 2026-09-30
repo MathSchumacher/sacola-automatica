@@ -24,7 +24,7 @@
 //   confiavel   o checkbox só aceita clique "de pessoa" (isTrusted) — o label.click() passa, porque o
 //               Chrome repassa o clique do label ao input como confiável
 //   ignora      o checkbox não responde a nada: simula a tela em que a extensão não consegue marcar
-// Extras: &cabecalho=1 põe um checkbox "Todos" no cabeçalho da grade (fora dos cards); &manual=1 simula a dona adicionando o 1º produto na mão (6 s depois de abrir a janela);
+// Extras: &limite=N faz a sacola recusar acima de N produtos com o aviso da Shopee; &cabecalho=1 põe um checkbox "Todos" no cabeçalho da grade (fora dos cards); &manual=1 simula a dona adicionando o 1º produto na mão (6 s depois de abrir a janela);
 // &semContador=1 tira o "N produto(s) selecionado(s)"; &cardNeutro=1 tira a classe de
 // seleção do card (só o quadradinho muda de cor).
 //
@@ -361,6 +361,7 @@
     const [lista, setLista] = useState(false);
     const [adicionar, setAdicionar] = useState(false);
     const [sacola, setSacola] = useState(NA_SACOLA_INICIAL);
+    const [aviso, setAviso] = useState("");
     window.__sacola = sacola;
     useEffect(() => {
       const f = (e) => {
@@ -388,6 +389,7 @@
         h("div", { className: "ferramenta" }, h("div", { className: "icone" }, "🙋"), h("span", null, "Pedidos de Intro")),
       ),
       h("div", { className: "video" }, "vídeo"),
+      aviso ? h("div", { className: "toast" }, aviso) : null,
       lista ? h(ListaProdutos, { sacola, onAdicionar: () => setAdicionar(true), onFechar: () => setLista(false) }) : null,
       adicionar
         ? h(AdicionarProdutos, {
@@ -399,7 +401,16 @@
             },
             onConfirmar: (novos, conv) => {
               evento(`CONFIRMAR: ${novos.map((p) => p.id).join(",")}${conv ? " +url" : ""}`);
-              setSacola((s) => [...s, ...novos, ...(conv ? [conv] : [])]);
+              const limite = Number(params.get("limite")) || Infinity;
+              setSacola((s) => {
+                const entram = [...novos, ...(conv ? [conv] : [])];
+                const vagas = Math.max(0, limite - (OUTROS_NA_SACOLA + s.length));
+                if (entram.length > vagas) {
+                  setAviso("Você atingiu o limite máximo de produtos na lista");
+                  setTimeout(() => setAviso(""), 3000);
+                }
+                return [...s, ...entram.slice(0, vagas)];
+              });
               setAdicionar(false);
             },
           })

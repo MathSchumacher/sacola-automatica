@@ -110,6 +110,17 @@ const CENARIOS = {
       (sacola.filter((id) => id === 1).length === 1 && !(r.importados || []).includes("AAA-BBB-CCC")) ||
       `o 1º foi adicionado na mão e entrou de novo (sacola=${JSON.stringify(sacola)}, importados=${JSON.stringify(r.importados)})`,
   },
+  // A Shopee recusa por limite (cabe só 1 dos 2): parar na hora, motivo "cheia", NENHUM Importar via
+  // URL — em sacola cheia ele não adiciona nada e ainda daria o produto como "já estava".
+  sacolaCheia: {
+    v: "antd",
+    extras: ["limite=22"],
+    lote: [DESEMPENADEIRA, ALCA, FORA_DO_TOPO],
+    livre: true,
+    confere: (r, sacola, eventos) =>
+      (r.motivo === "cheia" && r.limiteReal === 22 && !eventos.some((e) => /\+url/.test(e)) && (r.pendentes || []).length === 3 && sacola.length === 2) ||
+      `esperava 'cheia' sem import (motivo=${r.motivo}, pendentes=${JSON.stringify(r.pendentes)}, eventos=${eventos.join(" | ")})`,
+  },
   foraDoTopo: { v: "antd", lote: [DESEMPENADEIRA, ALCA, FORA_DO_TOPO], confere: (r) => (r.importados || []).includes("GGG-HHH-III") || "o 3º devia entrar pela URL" },
   jaMarcado: { v: "desenhado", lote: [DESEMPENADEIRA, ALCA, PERFUME], confere: (r) => (r.jaEstavam || []).includes("PPP-QQQ-RRR") || "o perfume devia constar como 'já estava'" },
   jaMarcadoIlegivel: {
@@ -132,6 +143,10 @@ function avaliar(c, r, eventos, sacola) {
     if (eventos.some((e) => /alternar|CONFIRMAR/.test(e))) return "a simulação clicou em algo";
     if (!r.ok || !r.simulado || JSON.stringify(r.adicionados) !== JSON.stringify(["AAA-BBB-CCC", "DDD-EEE-FFF"])) return "a simulação não relatou os 2 produtos";
     return null;
+  }
+  if (c.livre) {
+    const extra = c.confere(r, sacola, eventos);
+    return extra === true ? null : extra;
   }
   if (c.pelaUrl) {
     if (eventos.some((e) => /alternar/.test(e))) return "nada devia ter sido alternado";
@@ -189,7 +204,7 @@ function avaliar(c, r, eventos, sacola) {
         if (estaticos[caminho]) return route.fulfill({ status: 200, contentType: "application/javascript", body: fs.readFileSync(estaticos[caminho]) });
         return route.fulfill({ status: 200, contentType: "text/html", body: fs.readFileSync(path.join(PAGINA, "pagina.html")) });
       });
-      const extras = (c.extras || []).map((e) => `&${e}=1`).join("");
+      const extras = (c.extras || []).map((e) => (e.includes("=") ? `&${e}` : `&${e}=1`)).join("");
       await page.goto(`https://live.shopee.com.br/pc/live?session=1&cenario=${nome}&v=${c.v}${extras}`);
       await page.waitForSelector(".ferramenta");
       await page.waitForTimeout(800); // o content script sobe no document_idle
