@@ -802,6 +802,12 @@ async function rodarSacola(modo) {
 
   sacolaRodando = true;
   await setState({ bagRunning: true });
+  // O lote é consumido AGORA, antes de a página começar — não no fim. O service worker pode ser
+  // morto no meio de uma rodada longa (a Shopee demora); a página termina sozinha, mas quem
+  // consumiria o lote morreu, e o próximo ID rodava com o lote inteiro: os antigos eram
+  // marcados e importados de novo a cada ID. Consumido antes, o pior caso é o inverso: um
+  // produto deixa de subir — nunca sobe duas vezes.
+  if (modo === "real") await consumirLote(bag, "enviado");
   let r;
   try {
     // frameId 0 = janela principal. Sem isto, um iframe responderia primeiro (e com erro),
@@ -831,7 +837,6 @@ async function rodarSacola(modo) {
     await setState({ bagRunning: false });
     const err = { ok: false, motivo: "semResposta", erro: String((e && e.message) || e), modo, at: Date.now() };
     await setState({ bagLast: err });
-    if (modo === "real") await consumirLote(bag, "semResposta");
     void processQueue(); // a fila de favoritos não pode ficar parada por causa da sacola
     return err;
   } finally {
@@ -841,7 +846,6 @@ async function rodarSacola(modo) {
   if (!r) {
     const err = { ok: false, motivo: "semResposta", modo, at: Date.now() };
     await setState({ bagLast: err });
-    if (modo === "real") await consumirLote(bag, "semResposta");
     void processQueue();
     return err;
   }
@@ -865,9 +869,13 @@ async function rodarSacola(modo) {
   if (modo === "real") {
     // Relê o lote: produtos favoritados DURANTE a execução não podem ser apagados por um
     // snapshot velho. "nadaNovo" também sai do lote — o objetivo (estar na sacola) foi cumprido.
-    // Rodada terminada = lote consumido, qualquer que tenha sido o resultado (entrou, não entrou,
-    // sacola cheia, tela que não abriu, demorou). Nada fica para depois.
-    await consumirLote(bag, r.motivo || "ok");
+    if (r.motivo === "jaRodando") {
+      // A página ainda estava numa rodada anterior (worker reiniciado no meio): nada foi
+      // tentado com este lote. Devolve ao lote, para o próximo gatilho — único caso em que volta.
+      await devolverLote(bag);
+    } else {
+      await consumirLote(bag, r.motivo || "ok"); // só atualiza o motivo no histórico
+    }
   }
   await setState({ bagLast: resultado, bagTentativas: 0 });
   // Abrir/fechar a janela de produtos costuma re-renderizar o painel e derrubar a referência
@@ -879,6 +887,17 @@ async function rodarSacola(modo) {
   // Favoritar volta imediatamente: códigos que chegaram no chat durante a sacola não esperam.
   void processQueue();
   return resultado;
+}
+
+/** Desfaz o consumo: a página nem olhou o lote (rodada anterior ainda em curso). */
+async function devolverLote(snapshot) {
+  const { bag: atual = [], bagHistorico: hist = [] } = await chrome.storage.local.get(["bag", "bagHistorico"]);
+  const codigos = new Set(snapshot.map((b) => b.codigo));
+  await setState({
+    bag: [...snapshot.filter((b) => !atual.some((a) => a.codigo === b.codigo)), ...atual],
+    bagHistorico: hist.filter((h) => !(codigos.has(h.codigo) && h.motivo === "enviado")),
+  });
+  log(`sacola: a página ainda estava ocupada; ${snapshot.length} produto(s) voltam ao lote para a próxima vez`);
 }
 
 /** Uma rodada terminou (seja como for): os produtos que ela tinha saem do lote e entram no
@@ -967,6 +986,8 @@ function log(msg) {
   }
 }
 chrome.runtime.onStartup.addListener(() => void processQueue());
+// Worker reiniciado (morto no meio de uma rodada): a flag de "rodando" na storage ficaria presa.
+void chrome.storage.local.set({ bagRunning: false });
 // Service worker pode dormir: um alarme periódico garante que a fila continue.
 chrome.alarms.create("tick", { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener((a) => {

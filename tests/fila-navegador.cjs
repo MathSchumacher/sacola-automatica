@@ -71,6 +71,9 @@ const CENARIOS = {
   },
   sembarra: { confere: (q) => (q.status === "failed" && !q.tentativas) || `esperava falha sem retry (status=${q.status}, tentativas=${q.tentativas || 0})`, maxSeg: 15 },
   historico: { soWorker: true },
+  // O worker manda o lote e a resposta nunca chega (aba sem content script = worker morto no
+  // meio): o lote tem de ter sido consumido ANTES do envio, e o produto estar no histórico.
+  loteConsumidoAntes: { soWorker: true },
   trava: { confere: (q) => q.status === "failed" || `esperava falha (status=${q.status})`, maxSeg: 110 },
 };
 
@@ -123,6 +126,22 @@ function servidor(modo) {
       let [sw] = ctx.serviceWorkers();
       if (!sw) sw = await ctx.waitForEvent("serviceworker", { timeout: 15000 });
       const t0 = Date.now();
+      if (c.soWorker && nome === "loteConsumidoAntes") {
+        const r = await sw.evaluate(async () => {
+          const [aba] = await chrome.tabs.query({}); // about:blank: ninguém responde
+          await chrome.storage.local.set({ queue: [], bagHistorico: [], liveStatus: { tabId: aba.id, at: Date.now() }, bag: [{ codigo: "AAA-BBB-CCC", itemId: 1, nome: "Produto Um", url: "https://shopee.com.br/x-i.1.1", pedidoEm: Date.now(), origem: "maria AAA-BBB-CCC" }] });
+          const res = await rodarSacola("real");
+          const { bag, bagHistorico } = await chrome.storage.local.get(["bag", "bagHistorico"]);
+          return { motivo: res.motivo, lote: bag.length, historico: bagHistorico.map((h) => `${h.codigo}:${h.motivo}`) };
+        });
+        const ok = r.lote === 0 && r.historico.some((h) => h.startsWith("AAA-BBB-CCC:"));
+        if (!ok) falhas++;
+        console.log(`${ok ? "ok    " : "FALHOU"} ${nome.padEnd(9)} [${ABRIR}]  resposta nunca chegou (${r.motivo}) · lote=${r.lote} (esperado 0) · histórico=${JSON.stringify(r.historico)}`);
+        await ctx.close();
+        fs.rmSync(perfil, { recursive: true, force: true });
+        srv.close();
+        continue;
+      }
       if (c.soWorker) {
         const r = await sw.evaluate(async () => {
           const item = (pedidoEm, origem) => ({ codigo: "AAA-BBB-CCC", itemId: 1, nome: "Produto Um", url: "https://shopee.com.br/x-i.1.1", pedidoEm, origem });
