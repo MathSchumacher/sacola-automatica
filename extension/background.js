@@ -760,7 +760,12 @@ async function rodarSacola(modo) {
   });
   if (bag.length !== loteBruto.length) await setState({ bag });
   if (!bag.length) return { ok: false, motivo: "loteVazio" };
-  if (!liveStatus || liveStatus.tabId == null) return { ok: false, motivo: "semAba" };
+  if (!liveStatus || liveStatus.tabId == null) {
+    // Sem aba da live não há como subir — e não fica para depois: "se não subiu na hora em que foi
+    // favoritado, não sobe depois". O lote é consumido e vai para o histórico.
+    await consumirLote(bag, "semAba");
+    return { ok: false, motivo: "semAba" };
+  }
 
   sacolaRodando = true;
   await setState({ bagRunning: true });
@@ -788,6 +793,7 @@ async function rodarSacola(modo) {
     await setState({ bagRunning: false });
     const err = { ok: false, motivo: "semResposta", erro: String((e && e.message) || e), modo, at: Date.now() };
     await setState({ bagLast: err });
+    if (modo === "real") await consumirLote(bag, "semResposta");
     void processQueue(); // a fila de favoritos não pode ficar parada por causa da sacola
     return err;
   } finally {
@@ -797,6 +803,7 @@ async function rodarSacola(modo) {
   if (!r) {
     const err = { ok: false, motivo: "semResposta", modo, at: Date.now() };
     await setState({ bagLast: err });
+    if (modo === "real") await consumirLote(bag, "semResposta");
     void processQueue();
     return err;
   }
@@ -812,14 +819,9 @@ async function rodarSacola(modo) {
   if (modo === "real") {
     // Relê o lote: produtos favoritados DURANTE a execução não podem ser apagados por um
     // snapshot velho. "nadaNovo" também sai do lote — o objetivo (estar na sacola) foi cumprido.
-    const { bag: atual = [], bagHistorico: hist = [] } = await chrome.storage.local.get(["bag", "bagHistorico"]);
-    await setState({ bag: loteAposSacola(atual, bag, r) });
-    // Tudo o que esta rodada examinou entra no histórico — entrando ou não.
-    if (r.examinou || r.motivo === "cheia" || r.motivo === "nadaNovo") {
-      const agora = Date.now();
-      const novos = bag.map((b) => ({ itemId: b.itemId || null, codigo: b.codigo, nome: (b.nome || "").slice(0, 80), at: agora }));
-      await setState({ bagHistorico: [...hist.filter((h) => !novos.some((n) => n.codigo === h.codigo)), ...novos].slice(-500) });
-    }
+    // Rodada terminada = lote consumido, qualquer que tenha sido o resultado (entrou, não entrou,
+    // sacola cheia, tela que não abriu, demorou). Nada fica para depois.
+    await consumirLote(bag, r.motivo || "ok");
   }
   await setState({ bagLast: resultado, bagTentativas: 0 });
   // Abrir/fechar a janela de produtos costuma re-renderizar o painel e derrubar a referência
@@ -833,22 +835,18 @@ async function rodarSacola(modo) {
   return resultado;
 }
 
-/** Depois de uma rodada REAL: UMA chance por produto. Tudo o que estava no lote quando a rodada
- *  começou sai dele — tenha entrado, ficado de fora, sobrado por sacola cheia ou falhado. Nada é
- *  tentado de novo em rodada posterior: o lote guardava o que não entrou (até 4 tentativas, e
- *  tudo em sacola cheia/entrada parcial) e, a cada produto novo favoritado, reinseria na sacola
- *  produtos antigos que a dona já tinha REMOVIDO de propósito. Se não subiu na hora em que foi
- *  favoritado, não sobe depois; o que já subiu jamais é tentado de novo.
- *  Só fica no lote o que foi favoritado DURANTE a rodada (entrou depois do snapshot) e, se a
- *  rodada nem chegou a olhar a tela (sem aba, janela que não abriu), o lote inteiro — aí ninguém
- *  foi tentado ainda. */
-function loteAposSacola(atual, snapshot, r) {
-  const examinou = !!r.examinou || r.motivo === "cheia" || r.motivo === "nadaNovo";
-  if (!examinou) return atual;
-  const tentados = new Set(snapshot.map((b) => b.codigo));
-  const descartados = atual.filter((b) => tentados.has(b.codigo) && !(r.adicionados || []).includes(b.codigo) && !(r.jaEstavam || []).includes(b.codigo));
-  if (descartados.length) log(`sacola: ${descartados.map((b) => b.codigo).join(", ")} não entrou nesta rodada e NÃO será tentado de novo (uma chance por produto)`);
-  return atual.filter((b) => !tentados.has(b.codigo));
+/** Uma rodada terminou (seja como for): os produtos que ela tinha saem do lote e entram no
+ *  histórico da live — nunca mais sobem por conta da extensão (só se o chat pedir de novo). */
+async function consumirLote(snapshot, motivo) {
+  const { bag: atual = [], bagHistorico: hist = [] } = await chrome.storage.local.get(["bag", "bagHistorico"]);
+  const consumidos = new Set(snapshot.map((b) => b.codigo));
+  const agora = Date.now();
+  const novos = snapshot.map((b) => ({ itemId: b.itemId || null, codigo: b.codigo, nome: (b.nome || "").slice(0, 80), at: agora, motivo }));
+  await setState({
+    bag: atual.filter((b) => !consumidos.has(b.codigo)),
+    bagHistorico: [...hist.filter((h) => !consumidos.has(h.codigo)), ...novos].slice(-500),
+  });
+  if (motivo !== "ok" && snapshot.length) log(`sacola (${motivo}): ${snapshot.map((b) => b.codigo).join(", ")} sai do lote — não será tentado de novo`);
 }
 
 /** Motivos em que insistir sozinha só geraria janelas abrindo à toa na live. */

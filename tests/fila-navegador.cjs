@@ -126,11 +126,13 @@ function servidor(modo) {
           const antes = await rodarSacola("real");
           await chrome.storage.local.set({ bag: [item(2000)] }); // pedido DEPOIS: o chat pediu de novo
           const depois = await rodarSacola("real");
-          return { antes: antes.motivo, depois: depois.motivo };
+          const { bag, bagHistorico } = await chrome.storage.local.get(["bag", "bagHistorico"]);
+          return { antes: antes.motivo, depois: depois.motivo, loteDepois: bag.length, noHistorico: bagHistorico.some((h) => h.codigo === "AAA-BBB-CCC" && h.at > 1000) };
         });
-        const ok = r.antes === "loteVazio" && r.depois === "semAba";
+        // a rodada "semAba" também CONSOME o lote: nada fica para depois
+        const ok = r.antes === "loteVazio" && r.depois === "semAba" && r.loteDepois === 0 && r.noHistorico;
         if (!ok) falhas++;
-        console.log(`${ok ? "ok    " : "FALHOU"} ${nome.padEnd(9)} [${ABRIR}]  pedido antigo → ${r.antes} (esperado loteVazio) · pedido novo → ${r.depois} (esperado semAba: passou do filtro)`);
+        console.log(`${ok ? "ok    " : "FALHOU"} ${nome.padEnd(9)} [${ABRIR}]  pedido antigo → ${r.antes} (esperado loteVazio) · pedido novo → ${r.depois} (esperado semAba: passou do filtro) · lote depois=${r.loteDepois} (esperado 0) · no histórico=${r.noHistorico}`);
         await ctx.close();
         fs.rmSync(perfil, { recursive: true, force: true });
         srv.close();
