@@ -16,6 +16,7 @@
   window.__achadinhosBag = true;
 
   let rodando = false; // trava contra duas execuções simultâneas na mesma página
+  let cancelado = false; // o worker desistiu desta rodada (prazo): parar de mexer na tela
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = [];
   const reg = (msg) => {
@@ -1563,6 +1564,7 @@
       const naoAchados = [];
       const pares = casarLoteComCards(procurar, cards);
       for (const par of pares) {
+        if (cancelado) break;
         if (par.status === "naoAchado") {
           naoAchados.push(par.item);
           // Diz o que viu, para o log explicar POR QUE o produto não casou.
@@ -1732,6 +1734,10 @@
       };
     }
 
+    if (cancelado) {
+      await fecharModais();
+      return { ok: false, motivo: "cancelado", examinou: true, ...parcialBase() };
+    }
     const confirmar = acharPorTexto(["confirmar"], "button,div,span");
     if (!confirmar) {
       await fecharModais();
@@ -2132,6 +2138,10 @@
     let motivo = null;
     for (const item of [...pendentes.values()]) {
       if (!item.url) continue;
+      if (cancelado) {
+        motivo = "cancelado";
+        break;
+      }
       if (adicionados.length >= espaco || (atual != null && atual >= limite)) {
         motivo = "cheia";
         break;
@@ -2166,6 +2176,7 @@
       return true;
     }
     rodando = true;
+    cancelado = false;
     (async () => {
       try {
         const r = await adicionarNaSacola(msg.lote || [], { modo: msg.modo || "simular", limite: msg.limite || 50 });
@@ -2181,6 +2192,14 @@
         rodando = false;
       }
     })();
+    return true;
+  });
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || msg.type !== "bag-cancel") return false;
+    cancelado = true;
+    reg("o worker desistiu desta rodada (prazo): paro de mexer na tela");
+    sendResponse({ ok: true, rodando });
     return true;
   });
 

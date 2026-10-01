@@ -51,11 +51,33 @@ async function updateBadge() {
 }
 
 /** Adiciona referências à fila (dedupe por itemId/url). */
+/** Códigos que a busca da Shopee já respondeu que NÃO são produto (noresult). Um deles numa
+ *  mensagem fixa do chat era relido a cada abertura da live e abria uma aba à toa toda vez
+ *  (o "PLA-YTX-LAS"). Código inválido não vira produto depois: fica lembrado por 24 h. */
+const INVALIDO_LEMBRADO_MS = 24 * 3600_000;
+async function codigosInvalidos() {
+  const { codigosInvalidos = {} } = await chrome.storage.local.get("codigosInvalidos");
+  const agora = Date.now();
+  const vivos = Object.fromEntries(Object.entries(codigosInvalidos).filter(([, at]) => agora - at < INVALIDO_LEMBRADO_MS));
+  return vivos;
+}
+async function lembrarInvalido(code) {
+  if (!code) return;
+  const vivos = await codigosInvalidos();
+  vivos[code] = Date.now();
+  await setState({ codigosInvalidos: vivos });
+}
+
 async function enqueue(refs, source) {
   const { queue, settings } = await getState();
+  const invalidos = await codigosInvalidos();
   let added = 0;
   const repetidos = [];
   for (const ref of refs) {
+    if (ref.kind === "code" && invalidos[ref.code]) {
+      log(`${ref.code}: a Shopee já disse que não é produto (${new Date(invalidos[ref.code]).toLocaleTimeString("pt-BR")}) — não entra na fila`);
+      continue;
+    }
     const key = ref.kind === "code" ? `code:${ref.code}` : ref.itemId ? `item:${ref.itemId}` : `url:${ref.url}`;
     if (queue.some((q) => q.key === key)) {
       repetidos.push(ref.code || ref.url || String(ref.itemId));
@@ -423,6 +445,7 @@ async function trabalhar(item, settings) {
       cur.note = result.message || result.code || "falhou";
       cur.diag = result.diag || null;
       fresh.stats.failed = (fresh.stats.failed || 0) + 1;
+      if (result.code === "noresult" && cur.code) await lembrarInvalido(cur.code);
       if (result.code === "login" || result.code === "captcha") {
         fresh.settings.enabled = false;
         pausar = true;
@@ -788,6 +811,11 @@ async function rodarSacola(modo) {
       ),
       new Promise((res) => setTimeout(() => res({ ok: false, motivo: "demorou", log: ["a página da live não respondeu em 3 min"] }), 180000)),
     ]);
+    if (r && r.motivo === "demorou") {
+      // A página continua trabalhando no lote velho — manda parar. Sem isto, os produtos desta
+      // rodada (já consumidos aqui) ainda iam pela URL, e na rodada seguinte de novo.
+      chrome.tabs.sendMessage(liveStatus.tabId, { type: "bag-cancel" }, { frameId: 0 }).catch(() => {});
+    }
   } catch (e) {
     sacolaRodando = false;
     await setState({ bagRunning: false });

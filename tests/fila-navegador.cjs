@@ -63,7 +63,12 @@ const PRODUTO = `<html><head><title>Produto Bom</title></head><body><h1>Produto 
 
 const CENARIOS = {
   produto: { confere: (q, bag) => (q.status === "done" && bag.length === 1) || `esperava favoritado + 1 no lote (status=${q.status}, lote=${bag.length})`, maxSeg: 20 },
-  lista: { confere: (q) => (q.status === "failed" && !q.tentativas) || `esperava falha sem retry (status=${q.status}, tentativas=${q.tentativas || 0})`, maxSeg: 10 },
+  lista: {
+    maxSeg: 10,
+    confere: (q, bag, extra) =>
+      (q.status === "failed" && !q.tentativas && extra.segundaVez && extra.segundaVez.added === 0) ||
+      `esperava falha sem retry e recusa ao reenfileirar (status=${q.status}, tentativas=${q.tentativas || 0}, 2ª vez=${JSON.stringify(extra.segundaVez)})`,
+  },
   sembarra: { confere: (q) => (q.status === "failed" && !q.tentativas) || `esperava falha sem retry (status=${q.status}, tentativas=${q.tentativas || 0})`, maxSeg: 15 },
   historico: { soWorker: true },
   trava: { confere: (q) => q.status === "failed" || `esperava falha (status=${q.status})`, maxSeg: 110 },
@@ -152,8 +157,10 @@ function servidor(modo) {
       }
       const seg = (Date.now() - t0) / 1000;
       let erro = !q || q.status === "pending" || q.status === "working" ? "não terminou em 300 s" : null;
+      // o mesmo código de novo (mensagem fixa relida ao abrir a live): inválido não pode voltar à fila
+      const segundaVez = await sw.evaluate(async () => enqueue(parseProductRefs("ABC-DEF-GHI", { linhaDeChat: false }), "manual"));
       if (!erro) {
-        const r = c.confere(q, bag);
+        const r = c.confere(q, bag, { segundaVez });
         if (r !== true) erro = r;
       }
       if (!erro && seg > c.maxSeg) erro = `demorou ${seg.toFixed(0)} s (máximo ${c.maxSeg} s)`;
