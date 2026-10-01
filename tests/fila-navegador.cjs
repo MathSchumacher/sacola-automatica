@@ -125,19 +125,22 @@ function servidor(modo) {
       const t0 = Date.now();
       if (c.soWorker) {
         const r = await sw.evaluate(async () => {
-          const item = (pedidoEm) => ({ codigo: "AAA-BBB-CCC", itemId: 1, nome: "Produto Um", url: "https://shopee.com.br/x-i.1.1", pedidoEm });
-          await chrome.storage.local.set({ queue: [], bagHistorico: [{ itemId: 1, codigo: "AAA-BBB-CCC", nome: "Produto Um", at: 1000 }], liveStatus: null });
-          await chrome.storage.local.set({ bag: [item(500)] }); // pedido ANTES da rodada anterior
+          const item = (pedidoEm, origem) => ({ codigo: "AAA-BBB-CCC", itemId: 1, nome: "Produto Um", url: "https://shopee.com.br/x-i.1.1", pedidoEm, origem });
+          const h = () => [{ itemId: 1, codigo: "AAA-BBB-CCC", nome: "Produto Um", origem: "maria AAA-BBB-CCC", at: Date.now() - 60000 }];
+          await chrome.storage.local.set({ queue: [], bagHistorico: h(), liveStatus: null });
+          await chrome.storage.local.set({ bag: [item(Date.now() - 120000, "maria AAA-BBB-CCC")] }); // pedido ANTES da rodada anterior
           const antes = await rodarSacola("real");
-          await chrome.storage.local.set({ bag: [item(2000)] }); // pedido DEPOIS: o chat pediu de novo
+          await chrome.storage.local.set({ bagHistorico: h(), bag: [item(Date.now(), "maria AAA-BBB-CCC")] }); // MESMA mensagem relida (página recarregada)
+          const relida = await rodarSacola("real");
+          await chrome.storage.local.set({ bagHistorico: h(), bag: [item(Date.now(), "joana AAA-BBB-CCC")] }); // pedido NOVO: outra mensagem, depois
           const depois = await rodarSacola("real");
           const { bag, bagHistorico } = await chrome.storage.local.get(["bag", "bagHistorico"]);
-          return { antes: antes.motivo, depois: depois.motivo, loteDepois: bag.length, noHistorico: bagHistorico.some((h) => h.codigo === "AAA-BBB-CCC" && h.at > 1000) };
+          return { antes: antes.motivo, relida: relida.motivo, depois: depois.motivo, loteDepois: bag.length, noHistorico: bagHistorico.some((x) => x.codigo === "AAA-BBB-CCC" && x.origem === "joana AAA-BBB-CCC") };
         });
         // a rodada "semAba" também CONSOME o lote: nada fica para depois
-        const ok = r.antes === "loteVazio" && r.depois === "semAba" && r.loteDepois === 0 && r.noHistorico;
+        const ok = r.antes === "loteVazio" && r.relida === "loteVazio" && r.depois === "semAba" && r.loteDepois === 0 && r.noHistorico;
         if (!ok) falhas++;
-        console.log(`${ok ? "ok    " : "FALHOU"} ${nome.padEnd(9)} [${ABRIR}]  pedido antigo → ${r.antes} (esperado loteVazio) · pedido novo → ${r.depois} (esperado semAba: passou do filtro) · lote depois=${r.loteDepois} (esperado 0) · no histórico=${r.noHistorico}`);
+        console.log(`${ok ? "ok    " : "FALHOU"} ${nome.padEnd(9)} [${ABRIR}]  pedido antigo → ${r.antes} (esperado loteVazio) · mesma mensagem relida → ${r.relida} (esperado loteVazio) · pedido novo → ${r.depois} (esperado semAba: passou) · lote depois=${r.loteDepois} (esperado 0) · no histórico=${r.noHistorico}`);
         await ctx.close();
         fs.rmSync(perfil, { recursive: true, force: true });
         srv.close();

@@ -141,7 +141,17 @@
     for (const re of [RE_CODE_LOOSE, RE_CODE_LOOSE_GLUED]) {
       re.lastIndex = 0;
       const colado = re === RE_CODE_LOOSE_GLUED;
-      while ((m = re.exec(s))) achadosSoltos.push({ pos: m.index, raw: m[1], colado });
+      while ((m = re.exec(s))) {
+        const antes = s[m.index - 1] || "";
+        const depois = s[m.index + m[1].length] || "";
+        const depois2 = s[m.index + m[1].length + 1] || "";
+        // Pedaço de um endereço ("play-tx-las.livetech.shopee.com.br", "x.y.z"): não é código.
+        if (antes === "." || (depois === "." && /[A-Za-z0-9]/.test(depois2))) continue;
+        // Com hífen só vale o formato exato 3-3-3 (já tratado acima). "play-tx-las" tinha 9
+        // letras e virava PLA-YTX-LAS: reagrupar hífens de outro jeito inventa código.
+        if (m[1].includes("-")) continue;
+        achadosSoltos.push({ pos: m.index, raw: m[1], colado });
+      }
     }
     achadosSoltos.sort((a, b) => a.pos - b.pos);
     // Mensagens do SISTEMA nunca trazem código — e o "x" nelas é um apelido anonimizado pela

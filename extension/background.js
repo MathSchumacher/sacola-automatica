@@ -413,6 +413,7 @@ async function trabalhar(item, settings) {
             precoMax: cur.precoMax ?? null,
             at: Date.now(),
             pedidoEm: cur.addedAt || Date.now(), // quando o chat pediu: decide se pode subir de novo
+            origem: cur.origem || "", // a mensagem do chat: "pedido de novo" é mensagem DIFERENTE
           });
           await setState({ bag });
         }
@@ -619,12 +620,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // de hoje recusa ("tra-nsm-iss" de "transmissao") sai aqui — era o fantasma que voltava
       // toda live e ficava na frente dos códigos reais.
       const revalidada = revalidarPendentes(queue, { novaSessao: true });
-      const emAndamento = revalidada.mantidos;
+      // Os já atendidos (favoritados, falhados) FICAM na fila por 12 h. Tirá-los a cada carga
+      // da página fazia o chat inteiro ser relido e todo código antigo ser favoritado e subir
+      // para a sacola de novo — e a página "carrega" não só no F5: também quando a Shopee
+      // re-renderiza ou no "Recarregar" do player. Pedido novo do mesmo código dentro das 12 h
+      // é tratado como repetido (aparece no popup), igual a antes dentro da mesma live.
+      const limiteAtendidos = Date.now() - 12 * 3600_000;
+      const atendidosRecentes = queue.filter((q) => q.status !== "pending" && q.status !== "working" && (q.addedAt || 0) >= limiteAtendidos);
+      const emAndamento = [...revalidada.mantidos, ...atendidosRecentes];
       if (revalidada.removidos.length) log(`removidos ao abrir a live (o parser atual não os reconhece como código): ${revalidada.removidos.join(", ")}`);
       const liberados = queue.length - emAndamento.length;
       await setState({
         bag: [],
-        bagHistorico: [],
         bagSession: msg.sessao || "",
         bagDesde: Date.now(),
         bagTentativas: 0,
@@ -633,7 +640,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
       await updateBadge();
       if (bag.length) log(`live recarregada: lote da sacola zerado (${bag.length} produto(s) descartados)`);
-      if (liberados) log(`live recarregada: ${liberados} código(s) já atendidos saíram da fila (podem ser pedidos de novo)`);
+      if (liberados) log(`live recarregada: ${liberados} código(s) atendidos há mais de 12 h saíram da fila`);
       sendResponse({ ok: true, descartados: bag.length, liberados });
     } else if (msg.type === "recarregou-sozinho") {
       // o vigia da página viu a sacola cinza e tentou o "Recarregar" por conta própria
@@ -777,8 +784,11 @@ async function rodarSacola(modo) {
   const bag = loteBruto.filter((b) => {
     const anterior = bagHistorico.find((h) => (b.itemId && h.itemId === b.itemId) || (b.codigo && h.codigo === b.codigo));
     if (!anterior) return true;
-    if ((b.pedidoEm || 0) > anterior.at) return true; // pedido novo no chat, depois da rodada anterior
-    log(`sacola: ${b.codigo} já passou pela sacola nesta live (${new Date(anterior.at).toLocaleTimeString("pt-BR")}) e não foi pedido de novo — não sobe`);
+    // Pedido NOVO = mensagem do chat diferente da que subiu o produto antes, e posterior à
+    // rodada. Uma releitura do chat (página recarregada) repete a mesma mensagem: não conta.
+    const mensagemNova = (b.origem || "") !== (anterior.origem || "") && (b.pedidoEm || 0) > anterior.at;
+    if (mensagemNova) return true;
+    log(`sacola: ${b.codigo} já passou pela sacola (${new Date(anterior.at).toLocaleTimeString("pt-BR")}) e não houve pedido novo — não sobe`);
     return false;
   });
   if (bag.length !== loteBruto.length) await setState({ bag });
@@ -877,10 +887,12 @@ async function consumirLote(snapshot, motivo) {
   const { bag: atual = [], bagHistorico: hist = [] } = await chrome.storage.local.get(["bag", "bagHistorico"]);
   const consumidos = new Set(snapshot.map((b) => b.codigo));
   const agora = Date.now();
-  const novos = snapshot.map((b) => ({ itemId: b.itemId || null, codigo: b.codigo, nome: (b.nome || "").slice(0, 80), at: agora, motivo }));
+  const novos = snapshot.map((b) => ({ itemId: b.itemId || null, codigo: b.codigo, nome: (b.nome || "").slice(0, 80), origem: b.origem || "", at: agora, motivo }));
+  // O histórico NÃO zera com a página da live (ela "carrega" mais vezes do que parece): vale 24 h.
+  const vivo = hist.filter((h) => agora - (h.at || 0) < 24 * 3600_000 && !consumidos.has(h.codigo));
   await setState({
     bag: atual.filter((b) => !consumidos.has(b.codigo)),
-    bagHistorico: [...hist.filter((h) => !consumidos.has(h.codigo)), ...novos].slice(-500),
+    bagHistorico: [...vivo, ...novos].slice(-1000),
   });
   if (motivo !== "ok" && snapshot.length) log(`sacola (${motivo}): ${snapshot.map((b) => b.codigo).join(", ")} sai do lote — não será tentado de novo`);
 }
