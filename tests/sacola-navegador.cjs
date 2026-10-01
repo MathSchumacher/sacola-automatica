@@ -129,6 +129,23 @@ const CENARIOS = {
     extras: ["velhos=3,4"],
     confere: (r, sacola) => (!sacola.includes(3) && !sacola.includes(4) && sacola.length === 3) || `produtos antigos marcados entraram junto (sacola=${JSON.stringify(sacola)})`,
   },
+  // O mesmo, mas o marcador antigo só se vê pela COR (sem classe de estado, sem contador): a
+  // limpeza precisa reconhecer o quadradinho preenchido.
+  selecaoVelhaMuda: {
+    v: "embaralhado",
+    extras: ["velhos=3,4", "cardNeutro", "semContador"],
+    confere: (r, sacola) => (!sacola.includes(3) && !sacola.includes(4) && sacola.length === 3) || `produtos antigos marcados entraram junto (sacola=${JSON.stringify(sacola)})`,
+  },
+  // Marcação antiga + um produto que vai pelo Importar via URL: a seleção é da janela inteira e
+  // entraria junto no Confirmar da importação.
+  importComVelhos: {
+    v: "antd",
+    extras: ["velhos=3,4"],
+    lote: [DESEMPENADEIRA, ALCA, FORA_DO_TOPO],
+    confere: (r, sacola) =>
+      (!sacola.includes(3) && !sacola.includes(4) && (r.importados || []).includes("GGG-HHH-III") && sacola.length === 4) ||
+      `esperava 1, 2 e o importado, sem os antigos (sacola=${JSON.stringify(sacola)}, importados=${JSON.stringify(r.importados)})`,
+  },
   foraDoTopo: { v: "antd", lote: [DESEMPENADEIRA, ALCA, FORA_DO_TOPO], confere: (r) => (r.importados || []).includes("GGG-HHH-III") || "o 3º devia entrar pela URL" },
   jaMarcado: { v: "desenhado", lote: [DESEMPENADEIRA, ALCA, PERFUME], confere: (r) => (r.jaEstavam || []).includes("PPP-QQQ-RRR") || "o perfume devia constar como 'já estava'" },
   jaMarcadoIlegivel: {

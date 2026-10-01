@@ -809,6 +809,14 @@ async function rodarSacola(modo) {
   }
 
   const resultado = { ...r, modo, at: Date.now() };
+  if (r.entraramAlem) {
+    log(`ATENÇÃO: ${r.entraramAlem} produto(s) além dos marcados entraram na sacola (seleção antiga da janela)`);
+    try {
+      chrome.notifications.create({ type: "basic", iconUrl: "icons/128.png", title: `${NOME_EDICAO}: confira a sacola`, message: `${r.entraramAlem} produto(s) antigos entraram junto com os novos. Remova-os da Lista de produtos.` });
+    } catch {
+      /* ignore */
+    }
+  }
   if (r.motivo === "cheia" && Number.isFinite(r.limiteReal) && r.limiteReal > 0 && r.limiteReal < limiteConfigurado) {
     if (r.limiteReal !== bagLimiteAprendido) log(`a Shopee recusou com ${r.limiteReal} produtos: passo a considerar esse o limite da sacola (o configurado é ${limiteConfigurado})`);
     await setState({ bagLimiteAprendido: r.limiteReal });

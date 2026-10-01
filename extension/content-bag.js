@@ -1308,15 +1308,23 @@
     });
     let desmarcados = 0;
     for (const c of cardsFavoritos()) {
-      if (estadoDoCard(c) !== true || cardDesabilitado(c)) continue;
+      const estado = estadoDoCard(c);
+      const marcado = estado === true || (estado === null && quadradinhoCheio(c));
+      if (!marcado || cardDesabilitado(c)) continue;
       if (estaNaSacola(c.titulo)) continue;
       const alvos = alvosDeMarcacao(c);
       for (const alvo of alvos) {
         realClick(alvo.el, alvo.x, alvo.y);
-        if (await esperar(() => estadoDoCard(cardVivo(c) || c) !== true, 1200, 100)) break;
+        const aindaMarcado = () => {
+          const v = cardVivo(c) || c;
+          const e = estadoDoCard(v);
+          return e === true || (e === null && quadradinhoCheio(v));
+        };
+        if (await esperar(() => !aindaMarcado(), 1200, 100)) break;
       }
       const vivo = cardVivo(c) || c;
-      if (estadoDoCard(vivo) === true) reg(`marcação antiga que NÃO consegui desmarcar: "${c.titulo.slice(0, 40)}"`);
+      const eFinal = estadoDoCard(vivo);
+      if (eFinal === true || (eFinal === null && quadradinhoCheio(vivo))) reg(`marcação antiga que NÃO consegui desmarcar: "${c.titulo.slice(0, 40)}"`);
       else {
         desmarcados++;
         reg(`desmarquei marcação antiga (não está na sacola): "${c.titulo.slice(0, 40)}"`);
@@ -1733,6 +1741,24 @@
       await fecharModais();
       return { ok: false, motivo: "selecaoVelha", examinou: true, ...parcialBase() };
     }
+    // Última conferência: o contador da janela tem de bater com o que NÓS marcamos. Mais que
+    // isso é seleção antiga que entraria junto — limpa de novo; se continuar, não confirma.
+    {
+      const nossos = novos.length + incertos.length;
+      const raizC = containerModalFavoritos();
+      let contador = contadorDeSelecionados(botaoConfirmar(raizC), raizC);
+      if (contador != null && contador > nossos) {
+        reg(`contador mostra ${contador} selecionado(s) e marcamos ${nossos}: limpando seleção antiga antes de confirmar`);
+        await limparMarcacoesVelhas();
+        const raizD = containerModalFavoritos();
+        contador = contadorDeSelecionados(botaoConfirmar(raizD), raizD);
+        if (contador != null && contador > nossos) {
+          reg(`ainda ${contador} selecionado(s) para ${nossos} nossos: NÃO confirmo — levaria produto antigo junto`);
+          await fecharModais();
+          return { ok: false, motivo: "selecaoVelha", examinou: true, ...parcialBase() };
+        }
+      }
+    }
     // Registra ANTES de clicar: se o service worker hibernar ou der exceção depois daqui,
     // ainda saberemos que a confirmação foi disparada (evita reabrir tudo e duplicar).
     try {
@@ -1767,6 +1793,8 @@
     // parte não entrou — devolvemos esses códigos ao lote em vez de dá-los como adicionados.
     const confirmado = cresceu != null && cresceu >= novos.length;
     const parcial = cresceu != null && cresceu > 0 && cresceu < novos.length;
+    const alem = cresceu != null ? cresceu - novos.length - incertos.length : 0;
+    if (alem > 0) reg(`ATENÇÃO: a sacola cresceu ${cresceu}, mas marcamos ${novos.length + incertos.length}: ${alem} produto(s) antigo(s) que a janela tinha como selecionados entraram junto. Confira a Lista de produtos.`);
     if (!confirmado) reg(`entrada não confirmada (antes=${antes}, depois=${depois == null ? "?" : depois}, marcados=${novos.length})`);
     // A Shopee recusou por LIMITE (o dela pode ser menor que o configurado, ou a contagem lida
     // pode estar defasada): parar aqui. Tentar o Importar via URL em sacola cheia não adiciona
@@ -1803,6 +1831,7 @@
     return {
       ok: confirmado,
       parcial,
+      entraramAlem: alem > 0 ? alem : undefined,
       limiteReal: limiteVistoNestaRodada ? atualFinal : undefined,
       motivo: confirmado ? undefined : parcial ? "parcial" : "semConfirmacao",
       examinou: true,
@@ -1980,10 +2009,10 @@
         return false;
       }
     }
-    // Seleção pendente na janela (de Meus Favoritos) entraria junto no Confirmar da importação.
-    const raizAntes = containerModalFavoritos();
-    const pendentesNaJanela = contadorDeSelecionados(botaoConfirmar(raizAntes), raizAntes);
-    if (pendentesNaJanela > 0 && abaFavoritos()) {
+    // Seleção pendente na janela (de Meus Favoritos) entra junto no Confirmar da importação — a
+    // seleção é da janela inteira. SEMPRE passa por Meus Favoritos e limpa antes (o contador
+    // pode não existir; confiar só nele deixava produto antigo entrar junto).
+    if (abaFavoritos()) {
       realClick(abaFavoritos());
       await esperarGridEstavel(2500);
       const limpeza = await limparMarcacoesVelhas();
