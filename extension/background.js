@@ -390,6 +390,7 @@ async function trabalhar(item, settings) {
             preco: cur.preco ?? null,
             precoMax: cur.precoMax ?? null,
             at: Date.now(),
+            pedidoEm: cur.addedAt || Date.now(), // quando o chat pediu: decide se pode subir de novo
           });
           await setState({ bag });
         }
@@ -600,6 +601,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const liberados = queue.length - emAndamento.length;
       await setState({
         bag: [],
+        bagHistorico: [],
         bagSession: msg.sessao || "",
         bagDesde: Date.now(),
         bagTentativas: 0,
@@ -743,9 +745,20 @@ async function rodarSacola(modo) {
   if (sacolaRodando) return { ok: false, motivo: "jaRodando" };
   await destravarItens();
   const { queue, settings } = await getState();
-  const { bag = [], liveStatus } = await chrome.storage.local.get(["bag", "liveStatus"]);
+  const { bag: loteBruto = [], liveStatus, bagHistorico = [] } = await chrome.storage.local.get(["bag", "liveStatus", "bagHistorico"]);
   const faltando = queue.filter((q) => q.status === "pending" || q.status === "working").length;
   if (faltando) return { ok: false, motivo: "filaOcupada", faltando };
+  // GARANTIA: produto que já passou por uma rodada nesta live NUNCA sobe de novo por conta da
+  // extensão — a menos que o chat o tenha pedido DE NOVO depois dessa rodada (pedido por ID
+  // vale). "Teve produto que subiu umas 5 vezes e eu tirei" não pode acontecer.
+  const bag = loteBruto.filter((b) => {
+    const anterior = bagHistorico.find((h) => (b.itemId && h.itemId === b.itemId) || (b.codigo && h.codigo === b.codigo));
+    if (!anterior) return true;
+    if ((b.pedidoEm || 0) > anterior.at) return true; // pedido novo no chat, depois da rodada anterior
+    log(`sacola: ${b.codigo} já passou pela sacola nesta live (${new Date(anterior.at).toLocaleTimeString("pt-BR")}) e não foi pedido de novo — não sobe`);
+    return false;
+  });
+  if (bag.length !== loteBruto.length) await setState({ bag });
   if (!bag.length) return { ok: false, motivo: "loteVazio" };
   if (!liveStatus || liveStatus.tabId == null) return { ok: false, motivo: "semAba" };
 
@@ -799,8 +812,14 @@ async function rodarSacola(modo) {
   if (modo === "real") {
     // Relê o lote: produtos favoritados DURANTE a execução não podem ser apagados por um
     // snapshot velho. "nadaNovo" também sai do lote — o objetivo (estar na sacola) foi cumprido.
-    const { bag: atual = [] } = await chrome.storage.local.get("bag");
+    const { bag: atual = [], bagHistorico: hist = [] } = await chrome.storage.local.get(["bag", "bagHistorico"]);
     await setState({ bag: loteAposSacola(atual, bag, r) });
+    // Tudo o que esta rodada examinou entra no histórico — entrando ou não.
+    if (r.examinou || r.motivo === "cheia" || r.motivo === "nadaNovo") {
+      const agora = Date.now();
+      const novos = bag.map((b) => ({ itemId: b.itemId || null, codigo: b.codigo, nome: (b.nome || "").slice(0, 80), at: agora }));
+      await setState({ bagHistorico: [...hist.filter((h) => !novos.some((n) => n.codigo === h.codigo)), ...novos].slice(-500) });
+    }
   }
   await setState({ bagLast: resultado, bagTentativas: 0 });
   // Abrir/fechar a janela de produtos costuma re-renderizar o painel e derrubar a referência

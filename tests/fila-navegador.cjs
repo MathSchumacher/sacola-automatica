@@ -14,6 +14,8 @@
 //   produto   a busca redireciona para o produto → favoritado, entra no lote da sacola
 //   lista     a busca mostra uma lista de resultados = código inválido → sai da fila NA HORA, sem retry
 //   sembarra  a home vem sem barra de busca → falha rápida, sem retry
+//   historico (não abre página) produto que já passou pela sacola nesta live NÃO volta a subir —
+//             a menos que o chat o tenha pedido de novo depois (pedido por ID vale)
 //   trava     a página nunca responde → o prazo do worker estoura (50 s) e o item ganha UMA
 //             nova tentativa no fim da fila (era 120 s + 120 s = 4 min "favoritando…")
 const fs = require("fs");
@@ -63,6 +65,7 @@ const CENARIOS = {
   produto: { confere: (q, bag) => (q.status === "done" && bag.length === 1) || `esperava favoritado + 1 no lote (status=${q.status}, lote=${bag.length})`, maxSeg: 20 },
   lista: { confere: (q) => (q.status === "failed" && !q.tentativas) || `esperava falha sem retry (status=${q.status}, tentativas=${q.tentativas || 0})`, maxSeg: 10 },
   sembarra: { confere: (q) => (q.status === "failed" && !q.tentativas) || `esperava falha sem retry (status=${q.status}, tentativas=${q.tentativas || 0})`, maxSeg: 15 },
+  historico: { soWorker: true },
   trava: { confere: (q) => q.status === "failed" || `esperava falha (status=${q.status})`, maxSeg: 110 },
 };
 
@@ -115,6 +118,24 @@ function servidor(modo) {
       let [sw] = ctx.serviceWorkers();
       if (!sw) sw = await ctx.waitForEvent("serviceworker", { timeout: 15000 });
       const t0 = Date.now();
+      if (c.soWorker) {
+        const r = await sw.evaluate(async () => {
+          const item = (pedidoEm) => ({ codigo: "AAA-BBB-CCC", itemId: 1, nome: "Produto Um", url: "https://shopee.com.br/x-i.1.1", pedidoEm });
+          await chrome.storage.local.set({ queue: [], bagHistorico: [{ itemId: 1, codigo: "AAA-BBB-CCC", nome: "Produto Um", at: 1000 }], liveStatus: null });
+          await chrome.storage.local.set({ bag: [item(500)] }); // pedido ANTES da rodada anterior
+          const antes = await rodarSacola("real");
+          await chrome.storage.local.set({ bag: [item(2000)] }); // pedido DEPOIS: o chat pediu de novo
+          const depois = await rodarSacola("real");
+          return { antes: antes.motivo, depois: depois.motivo };
+        });
+        const ok = r.antes === "loteVazio" && r.depois === "semAba";
+        if (!ok) falhas++;
+        console.log(`${ok ? "ok    " : "FALHOU"} ${nome.padEnd(9)} [${ABRIR}]  pedido antigo → ${r.antes} (esperado loteVazio) · pedido novo → ${r.depois} (esperado semAba: passou do filtro)`);
+        await ctx.close();
+        fs.rmSync(perfil, { recursive: true, force: true });
+        srv.close();
+        continue;
+      }
       await sw.evaluate(async (abrir) => chrome.storage.local.set({ settings: { enabled: true, openMode: abrir, minDelayMs: 1500, maxDelayMs: 1500 } }), ABRIR);
       await sw.evaluate(async () => enqueue(parseProductRefs("ABC-DEF-GHI", { linhaDeChat: false }), "manual"));
       let q = null;
